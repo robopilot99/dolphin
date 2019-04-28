@@ -4,17 +4,22 @@
 
 #pragma once
 
+#include "Common/Common.h"
 #include "VideoCommon/VideoBackendBase.h"
 
 namespace Null
 {
 class VideoBackend : public VideoBackendBase
 {
-  bool Initialize(void* window_handle) override;
+  bool Initialize(const WindowSystemInfo& wsi) override;
   void Shutdown() override;
 
   std::string GetName() const override { return "Null"; }
-  std::string GetDisplayName() const override { return "Null"; }
+  std::string GetDisplayName() const override
+  {
+    // i18n: Null is referring to the null video backend, which renders nothing
+    return _trans("Null");
+  }
   void InitBackendInfo() override;
 };
-}
+}  // namespace Null

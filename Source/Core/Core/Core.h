@@ -18,6 +18,7 @@
 #include "Common/CommonTypes.h"
 
 struct BootParameters;
+struct WindowSystemInfo;
 
 namespace Core
 {
@@ -35,7 +36,7 @@ enum class State
   Starting,
 };
 
-bool Init(std::unique_ptr<BootParameters> boot);
+bool Init(std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi);
 void Stop();
 void Shutdown();
 
@@ -59,14 +60,13 @@ State GetState();
 void SaveScreenShot(bool wait_for_completion = false);
 void SaveScreenShot(const std::string& name, bool wait_for_completion = false);
 
-void Callback_WiimoteInterruptChannel(int _number, u16 _channelID, const void* _pData, u32 _Size);
+void Callback_WiimoteInterruptChannel(int number, u16 channel_id, const u8* data, u32 size);
 
 // This displays messages in a user-visible way.
 void DisplayMessage(const std::string& message, int time_in_ms);
 
 void FrameUpdateOnCPUThread();
 
-bool ShouldSkipFrame(int skipped);
 void VideoThrottle();
 void RequestRefreshInfo();
 
@@ -105,4 +105,4 @@ void HostDispatchJobs();
 
 void DoFrameStep();
 
-}  // namespace
+}  // namespace Core

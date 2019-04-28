@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <iomanip>
 #include <iterator>
 #include <mbedtls/config.h>
@@ -44,8 +45,14 @@
 #include "Core/HW/ProcessorInterface.h"
 #include "Core/HW/SI/SI.h"
 #include "Core/HW/Wiimote.h"
+#include "Core/HW/WiimoteCommon/DataReport.h"
 #include "Core/HW/WiimoteCommon/WiimoteReport.h"
-#include "Core/HW/WiimoteEmu/WiimoteEmu.h"
+
+#include "Core/HW/WiimoteEmu/Encryption.h"
+#include "Core/HW/WiimoteEmu/Extension/Classic.h"
+#include "Core/HW/WiimoteEmu/Extension/Nunchuk.h"
+#include "Core/HW/WiimoteEmu/ExtensionPort.h"
+
 #include "Core/IOS/USB/Bluetooth/BTEmu.h"
 #include "Core/IOS/USB/Bluetooth/WiimoteDevice.h"
 #include "Core/NetPlayProto.h"
@@ -63,6 +70,9 @@
 
 namespace Movie
 {
+using namespace WiimoteCommon;
+using namespace WiimoteEmu;
+
 static bool s_bReadOnly = true;
 static u32 s_rerecords = 0;
 static PlayMode s_playMode = MODE_NONE;
@@ -408,7 +418,7 @@ bool IsNetPlayRecording()
 }
 
 // NOTE: Host Thread
-void ChangePads(bool instantly)
+void ChangePads()
 {
   if (!Core::IsRunning())
     return;
@@ -421,7 +431,7 @@ void ChangePads(bool instantly)
       controllers |= (1 << i);
   }
 
-  if (instantly && (s_controllers & 0x0F) == controllers)
+  if ((s_controllers & 0x0F) == controllers)
     return;
 
   for (int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
@@ -440,10 +450,7 @@ void ChangePads(bool instantly)
       }
     }
 
-    if (instantly)  // Changes from savestates need to be instantaneous
-      SerialInterface::AddDevice(device, i);
-    else
-      SerialInterface::ChangeDevice(device, i);
+    SerialInterface::ChangeDevice(device, i);
   }
 }
 
@@ -466,9 +473,11 @@ void ChangeWiiPads(bool instantly)
                         nullptr;
   for (int i = 0; i < MAX_WIIMOTES; ++i)
   {
-    g_wiimote_sources[i] = IsUsingWiimote(i) ? WIIMOTE_SRC_EMU : WIIMOTE_SRC_NONE;
+    const bool is_using_wiimote = IsUsingWiimote(i);
+
+    g_wiimote_sources[i] = is_using_wiimote ? WIIMOTE_SRC_EMU : WIIMOTE_SRC_NONE;
     if (!SConfig::GetInstance().m_bt_passthrough_enabled && bt)
-      bt->AccessWiiMote(i | 0x100)->Activate(IsUsingWiimote(i));
+      bt->AccessWiimoteByIndex(i)->Activate(is_using_wiimote);
   }
 }
 
@@ -640,22 +649,18 @@ static void SetInputDisplayString(ControllerState padState, int controllerID)
 }
 
 // NOTE: CPU Thread
-static void SetWiiInputDisplayString(int remoteID, u8* const data,
-                                     const WiimoteEmu::ReportFeatures& rptf, int ext,
-                                     const wiimote_key key)
+static void SetWiiInputDisplayString(int remoteID, const DataReportBuilder& rpt, int ext,
+                                     const EncryptionKey& key)
 {
   int controllerID = remoteID + 4;
 
   std::string display_str = StringFromFormat("R%d:", remoteID + 1);
 
-  u8* const coreData = rptf.core ? (data + rptf.core) : nullptr;
-  u8* const accelData = rptf.accel ? (data + rptf.accel) : nullptr;
-  u8* const irData = rptf.ir ? (data + rptf.ir) : nullptr;
-  u8* const extData = rptf.ext ? (data + rptf.ext) : nullptr;
-
-  if (coreData)
+  if (rpt.HasCore())
   {
-    wm_buttons buttons = *(wm_buttons*)coreData;
+    ButtonData buttons;
+    rpt.GetCoreData(&buttons);
+
     if (buttons.left)
       display_str += " LEFT";
     if (buttons.right)
@@ -678,30 +683,37 @@ static void SetWiiInputDisplayString(int remoteID, u8* const data,
       display_str += " 2";
     if (buttons.home)
       display_str += " HOME";
-
-    // A few bits of accelData are actually inside the coreData struct.
-    if (accelData)
-    {
-      wm_accel* dt = (wm_accel*)accelData;
-      display_str += StringFromFormat(" ACC:%d,%d,%d", dt->x << 2 | buttons.acc_x_lsb,
-                                      dt->y << 2 | buttons.acc_y_lsb << 1,
-                                      dt->z << 2 | buttons.acc_z_lsb << 1);
-    }
   }
 
-  if (irData)
+  if (rpt.HasAccel())
   {
+    DataReportBuilder::AccelData accel_data;
+    rpt.GetAccelData(&accel_data);
+
+    // FYI: This will only print partial data for interleaved reports.
+
+    display_str += StringFromFormat(" ACC:%d,%d,%d", accel_data.x, accel_data.y, accel_data.z);
+  }
+
+  if (rpt.HasIR())
+  {
+    const u8* const irData = rpt.GetIRDataPtr();
+
+    // TODO: This does not handle the different IR formats.
+
     u16 x = irData[0] | ((irData[2] >> 4 & 0x3) << 8);
     u16 y = irData[1] | ((irData[2] >> 6 & 0x3) << 8);
     display_str += StringFromFormat(" IR:%d,%d", x, y);
   }
 
   // Nunchuk
-  if (extData && ext == 1)
+  if (rpt.HasExt() && ext == ExtensionNumber::NUNCHUK)
   {
-    wm_nc nunchuk;
-    memcpy(&nunchuk, extData, sizeof(wm_nc));
-    WiimoteDecrypt(&key, (u8*)&nunchuk, 0, sizeof(wm_nc));
+    const u8* const extData = rpt.GetExtDataPtr();
+
+    Nunchuk::DataFormat nunchuk;
+    memcpy(&nunchuk, extData, sizeof(nunchuk));
+    key.Decrypt((u8*)&nunchuk, 0, sizeof(nunchuk));
     nunchuk.bt.hex = nunchuk.bt.hex ^ 0x3;
 
     std::string accel = StringFromFormat(
@@ -717,20 +729,22 @@ static void SetWiiInputDisplayString(int remoteID, u8* const data,
   }
 
   // Classic controller
-  if (extData && ext == 2)
+  if (rpt.HasExt() && ext == ExtensionNumber::CLASSIC)
   {
-    wm_classic_extension cc;
-    memcpy(&cc, extData, sizeof(wm_classic_extension));
-    WiimoteDecrypt(&key, (u8*)&cc, 0, sizeof(wm_classic_extension));
+    const u8* const extData = rpt.GetExtDataPtr();
+
+    Classic::DataFormat cc;
+    memcpy(&cc, extData, sizeof(cc));
+    key.Decrypt((u8*)&cc, 0, sizeof(cc));
     cc.bt.hex = cc.bt.hex ^ 0xFFFF;
 
-    if (cc.bt.regular_data.dpad_left)
+    if (cc.bt.dpad_left)
       display_str += " LEFT";
     if (cc.bt.dpad_right)
       display_str += " RIGHT";
     if (cc.bt.dpad_down)
       display_str += " DOWN";
-    if (cc.bt.regular_data.dpad_up)
+    if (cc.bt.dpad_up)
       display_str += " UP";
     if (cc.bt.a)
       display_str += " A";
@@ -753,7 +767,7 @@ static void SetWiiInputDisplayString(int remoteID, u8* const data,
 
     display_str += Analog1DToString(cc.lt1 | (cc.lt2 << 3), " L", 31);
     display_str += Analog1DToString(cc.rt, " R", 31);
-    display_str += Analog2DToString(cc.regular_data.lx, cc.regular_data.ly, " ANA", 63);
+    display_str += Analog2DToString(cc.lx, cc.ly, " ANA", 63);
     display_str += Analog2DToString(cc.rx1 | (cc.rx2 << 1) | (cc.rx3 << 3), cc.ry, " R-ANA", 31);
   }
 
@@ -762,7 +776,7 @@ static void SetWiiInputDisplayString(int remoteID, u8* const data,
 }
 
 // NOTE: CPU Thread
-void CheckPadStatus(GCPadStatus* PadStatus, int controllerID)
+void CheckPadStatus(const GCPadStatus* PadStatus, int controllerID)
 {
   s_padState.A = ((PadStatus->button & PAD_BUTTON_A) != 0);
   s_padState.B = ((PadStatus->button & PAD_BUTTON_B) != 0);
@@ -798,7 +812,7 @@ void CheckPadStatus(GCPadStatus* PadStatus, int controllerID)
 }
 
 // NOTE: CPU Thread
-void RecordInput(GCPadStatus* PadStatus, int controllerID)
+void RecordInput(const GCPadStatus* PadStatus, int controllerID)
 {
   if (!IsRecordingInput() || !IsUsingPad(controllerID))
     return;
@@ -811,16 +825,16 @@ void RecordInput(GCPadStatus* PadStatus, int controllerID)
 }
 
 // NOTE: CPU Thread
-void CheckWiimoteStatus(int wiimote, u8* data, const WiimoteEmu::ReportFeatures& rptf, int ext,
-                        const wiimote_key key)
+void CheckWiimoteStatus(int wiimote, const DataReportBuilder& rpt, int ext,
+                        const EncryptionKey& key)
 {
-  SetWiiInputDisplayString(wiimote, data, rptf, ext, key);
+  SetWiiInputDisplayString(wiimote, rpt, ext, key);
 
   if (IsRecordingInput())
-    RecordWiimote(wiimote, data, rptf.size);
+    RecordWiimote(wiimote, rpt.GetDataPtr(), rpt.GetDataSize());
 }
 
-void RecordWiimote(int wiimote, u8* data, u8 size)
+void RecordWiimote(int wiimote, const u8* data, u8 size)
 {
   if (!IsRecordingInput() || !IsUsingWiimote(wiimote))
     return;
@@ -844,6 +858,7 @@ void ReadHeader()
   {
     s_bSaveConfig = true;
     Config::AddLayer(ConfigLoaders::GenerateMovieConfigLoader(&tmpHeader));
+    SConfig::GetInstance().bJITFollowBranch = tmpHeader.bFollowBranch;
     s_bClearSave = tmpHeader.bClearSave;
     s_memcards = tmpHeader.memcards;
     s_bongos = tmpHeader.bongos;
@@ -953,7 +968,7 @@ void LoadInput(const std::string& movie_path)
     t_record.WriteArray(&tmpHeader, 1);
   }
 
-  ChangePads(true);
+  ChangePads();
   if (SConfig::GetInstance().bWii)
     ChangeWiiPads(true);
 
@@ -1168,29 +1183,13 @@ void PlayController(GCPadStatus* PadStatus, int controllerID)
     PadStatus->button |= PAD_TRIGGER_R;
   if (s_padState.disc)
   {
-    // This implementation assumes the disc change will only happen once. Trying
-    // to change more than that will cause it to load the last disc every time.
-    // As far as I know, there are no 3+ disc games, so this should be fine.
-    bool found = false;
-    std::string path;
-    for (const std::string& iso_folder : SConfig::GetInstance().m_ISOFolder)
-    {
-      path = iso_folder + '/' + s_discChange;
-      if (File::Exists(path))
+    Core::RunAsCPUThread([] {
+      if (!DVDInterface::AutoChangeDisc())
       {
-        found = true;
-        break;
+        CPU::Break();
+        PanicAlertT("Change the disc to %s", s_discChange.c_str());
       }
-    }
-    if (found)
-    {
-      Core::RunAsCPUThread([&path] { DVDInterface::ChangeDisc(path); });
-    }
-    else
-    {
-      CPU::Break();
-      PanicAlertT("Change the disc to %s", s_discChange.c_str());
-    }
+    });
   }
 
   if (s_padState.reset)
@@ -1201,8 +1200,8 @@ void PlayController(GCPadStatus* PadStatus, int controllerID)
 }
 
 // NOTE: CPU Thread
-bool PlayWiimote(int wiimote, u8* data, const WiimoteEmu::ReportFeatures& rptf, int ext,
-                 const wiimote_key key)
+bool PlayWiimote(int wiimote, WiimoteCommon::DataReportBuilder& rpt, int ext,
+                 const EncryptionKey& key)
 {
   if (!IsPlayingInput() || !IsUsingWiimote(wiimote) || s_temp_input.empty())
     return false;
@@ -1215,9 +1214,8 @@ bool PlayWiimote(int wiimote, u8* data, const WiimoteEmu::ReportFeatures& rptf, 
     return false;
   }
 
-  u8 size = rptf.size;
-
-  u8 sizeInMovie = s_temp_input[s_currentByte];
+  const u8 size = rpt.GetDataSize();
+  const u8 sizeInMovie = s_temp_input[s_currentByte];
 
   if (size != sizeInMovie)
   {
@@ -1241,7 +1239,7 @@ bool PlayWiimote(int wiimote, u8* data, const WiimoteEmu::ReportFeatures& rptf, 
     return false;
   }
 
-  memcpy(data, &s_temp_input[s_currentByte], size);
+  memcpy(rpt.GetDataPtr(), &s_temp_input[s_currentByte], size);
   s_currentByte += size;
 
   s_currentInputCount++;
@@ -1300,6 +1298,7 @@ void SaveRecording(const std::string& filename)
   header.filetype[3] = 0x1A;
   strncpy(header.gameID.data(), SConfig::GetInstance().GetGameID().c_str(), 6);
   header.bWii = SConfig::GetInstance().bWii;
+  header.bFollowBranch = SConfig::GetInstance().bJITFollowBranch;
   header.controllers = s_controllers & (SConfig::GetInstance().bWii ? 0xFF : 0x0F);
 
   header.bFromSaveState = s_bRecordingFromSaveState;
@@ -1359,11 +1358,10 @@ void CallGCInputManip(GCPadStatus* PadStatus, int controllerID)
     s_gc_manip_func(PadStatus, controllerID);
 }
 // NOTE: CPU Thread
-void CallWiiInputManip(u8* data, WiimoteEmu::ReportFeatures rptf, int controllerID, int ext,
-                       const wiimote_key key)
+void CallWiiInputManip(DataReportBuilder& rpt, int controllerID, int ext, const EncryptionKey& key)
 {
   if (s_wii_manip_func)
-    s_wii_manip_func(data, rptf, controllerID, ext, key);
+    s_wii_manip_func(rpt, controllerID, ext, key);
 }
 
 // NOTE: GPU Thread
@@ -1389,7 +1387,7 @@ void GetSettings()
   }
   else
   {
-    s_bClearSave = !File::Exists(SConfig::GetInstance().m_strMemoryCardA);
+    s_bClearSave = !File::Exists(Config::Get(Config::MAIN_MEMCARD_A_PATH));
   }
   s_memcards |=
       (SConfig::GetInstance().m_EXIDevice[0] == ExpansionInterface::EXIDEVICE_MEMORYCARD ||
@@ -1482,4 +1480,4 @@ void Shutdown()
   s_currentInputCount = s_totalInputCount = s_totalFrames = s_tickCountAtLastInput = 0;
   s_temp_input.clear();
 }
-};
+}  // namespace Movie

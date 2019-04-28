@@ -22,6 +22,7 @@
 #elif defined ANDROID
 #define USERDATA_DIR "user"
 #define DOLPHIN_DATA_DIR "/sdcard/dolphin-emu"
+#define NOMEDIA_FILE ".nomedia"
 #else
 #define USERDATA_DIR "user"
 #define DOLPHIN_DATA_DIR "dolphin-emu"
@@ -39,6 +40,7 @@
 #define GAMESETTINGS_DIR "GameSettings"
 #define MAPS_DIR "Maps"
 #define CACHE_DIR "Cache"
+#define COVERCACHE_DIR "GameCovers"
 #define SHADERCACHE_DIR "Shaders"
 #define STATESAVES_DIR "StateSaves"
 #define SCREENSHOTS_DIR "ScreenShots"
@@ -47,6 +49,7 @@
 #define DUMP_DIR "Dump"
 #define DUMP_TEXTURES_DIR "Textures"
 #define DUMP_FRAMES_DIR "Frames"
+#define DUMP_OBJECTS_DIR "Objects"
 #define DUMP_AUDIO_DIR "Audio"
 #define DUMP_DSP_DIR "DSP"
 #define DUMP_SSL_DIR "SSL"
@@ -63,6 +66,7 @@
 #define MEMORYWATCHER_DIR "MemoryWatcher"
 #define WFSROOT_DIR "WFS"
 #define BACKUP_DIR "Backup"
+#define RESOURCEPACK_DIR "ResourcePacks"
 
 // This one is only used to remove it if it was present
 #define SHADERCACHE_LEGACY_DIR "ShaderCache"
@@ -108,6 +112,7 @@
 #define GC_SRAM "SRAM.raw"
 #define GC_MEMCARDA "MemoryCardA"
 #define GC_MEMCARDB "MemoryCardB"
+#define GC_MEMCARD_NETPLAY "NetPlayTemp"
 
 #define WII_STATE "state.dat"
 

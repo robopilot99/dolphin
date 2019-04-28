@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "Common/Common.h"
 #include "VideoCommon/VideoBackendBase.h"
 
 namespace Vulkan
@@ -11,11 +12,12 @@ namespace Vulkan
 class VideoBackend : public VideoBackendBase
 {
 public:
-  bool Initialize(void* window_handle) override;
+  bool Initialize(const WindowSystemInfo& wsi) override;
   void Shutdown() override;
 
   std::string GetName() const override { return "Vulkan"; }
-  std::string GetDisplayName() const override { return "Vulkan"; }
+  std::string GetDisplayName() const override { return _trans("Vulkan"); }
   void InitBackendInfo() override;
+  void PrepareWindow(const WindowSystemInfo& wsi) override;
 };
-}
+}  // namespace Vulkan

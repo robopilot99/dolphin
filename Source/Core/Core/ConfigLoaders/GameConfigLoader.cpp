@@ -83,6 +83,8 @@ static const INIToLocationMap& GetINIToLocationMap()
 static const INIToSectionMap& GetINIToSectionMap()
 {
   static const INIToSectionMap ini_to_section = {
+      {"Core", {Config::System::Main, "Core"}},
+      {"Display", {Config::System::Main, "Display"}},
       {"Video_Hardware", {Config::System::GFX, "Hardware"}},
       {"Video_Settings", {Config::System::GFX, "Settings"}},
       {"Video_Enhancements", {Config::System::GFX, "Enhancements"}},
@@ -315,4 +317,4 @@ std::unique_ptr<Config::ConfigLayerLoader> GenerateLocalGameConfigLoader(const s
 {
   return std::make_unique<INIGameConfigLayerLoader>(id, revision, false);
 }
-}
+}  // namespace ConfigLoaders

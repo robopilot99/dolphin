@@ -29,6 +29,7 @@ add_library(core
   Config/MainSettings.cpp
   Config/NetplaySettings.cpp
   Config/SYSCONFSettings.cpp
+  Config/UISettings.cpp
   ConfigLoaders/BaseConfigLoader.cpp
   ConfigLoaders/GameConfigLoader.cpp
   ConfigLoaders/IsSettingSaveable.cpp
@@ -38,18 +39,18 @@ add_library(core
   Debugger/Dump.cpp
   Debugger/PPCDebugInterface.cpp
   Debugger/RSO.cpp
-  DSP/DSPAssembler.cpp
-  DSP/DSPDisassembler.cpp
   DSP/DSPAccelerator.cpp
+  DSP/DSPAnalyzer.cpp
+  DSP/DSPAssembler.cpp
   DSP/DSPCaptureLogger.cpp
+  DSP/DSPCodeUtil.cpp
+  DSP/DSPCore.cpp
+  DSP/DSPDisassembler.cpp
   DSP/DSPHWInterface.cpp
   DSP/DSPMemoryMap.cpp
   DSP/DSPStacks.cpp
-  DSP/DSPAnalyzer.cpp
-  DSP/DSPCodeUtil.cpp
-  DSP/LabelMap.cpp
-  DSP/DSPCore.cpp
   DSP/DSPTables.cpp
+  DSP/LabelMap.cpp
   DSP/Interpreter/DSPIntArithmetic.cpp
   DSP/Interpreter/DSPIntBranch.cpp
   DSP/Interpreter/DSPIntCCUtil.cpp
@@ -58,16 +59,8 @@ add_library(core
   DSP/Interpreter/DSPIntLoadStore.cpp
   DSP/Interpreter/DSPIntMisc.cpp
   DSP/Interpreter/DSPIntMultiplier.cpp
-  DSP/Jit/x64/DSPEmitter.cpp
-  DSP/Jit/x64/DSPJitRegCache.cpp
-  DSP/Jit/x64/DSPJitExtOps.cpp
-  DSP/Jit/x64/DSPJitBranch.cpp
-  DSP/Jit/x64/DSPJitCCUtil.cpp
-  DSP/Jit/x64/DSPJitArithmetic.cpp
-  DSP/Jit/x64/DSPJitLoadStore.cpp
-  DSP/Jit/x64/DSPJitMultiplier.cpp
-  DSP/Jit/x64/DSPJitUtil.cpp
-  DSP/Jit/x64/DSPJitMisc.cpp
+  DSP/Interpreter/DSPIntTables.cpp
+  DSP/Jit/DSPEmitterBase.cpp
   FifoPlayer/FifoAnalyzer.cpp
   FifoPlayer/FifoDataFile.cpp
   FifoPlayer/FifoPlaybackAnalyzer.cpp
@@ -139,16 +132,22 @@ add_library(core
   HW/VideoInterface.cpp
   HW/WII_IPC.cpp
   HW/Wiimote.cpp
+  HW/WiimoteCommon/DataReport.cpp
   HW/WiimoteEmu/WiimoteEmu.cpp
-  HW/WiimoteEmu/Attachment/Classic.cpp
-  HW/WiimoteEmu/Attachment/Attachment.cpp
-  HW/WiimoteEmu/Attachment/Nunchuk.cpp
-  HW/WiimoteEmu/Attachment/Drums.cpp
-  HW/WiimoteEmu/Attachment/Guitar.cpp
-  HW/WiimoteEmu/Attachment/Turntable.cpp
+  HW/WiimoteEmu/Camera.cpp
+  HW/WiimoteEmu/Dynamics.cpp
   HW/WiimoteEmu/EmuSubroutines.cpp
   HW/WiimoteEmu/Encryption.cpp
+  HW/WiimoteEmu/ExtensionPort.cpp
+  HW/WiimoteEmu/I2CBus.cpp
+  HW/WiimoteEmu/MotionPlus.cpp
   HW/WiimoteEmu/Speaker.cpp
+  HW/WiimoteEmu/Extension/Classic.cpp
+  HW/WiimoteEmu/Extension/Extension.cpp
+  HW/WiimoteEmu/Extension/Nunchuk.cpp
+  HW/WiimoteEmu/Extension/Drums.cpp
+  HW/WiimoteEmu/Extension/Guitar.cpp
+  HW/WiimoteEmu/Extension/Turntable.cpp
   HW/WiimoteReal/WiimoteReal.cpp
   HW/WiiSave.cpp
   IOS/Device.cpp
@@ -208,7 +207,6 @@ add_library(core
   PowerPC/PPCCache.cpp
   PowerPC/PPCSymbolDB.cpp
   PowerPC/PPCTables.cpp
-  PowerPC/Profiler.cpp
   PowerPC/SignatureDB/CSVSignatureDB.cpp
   PowerPC/SignatureDB/DSYSignatureDB.cpp
   PowerPC/SignatureDB/MEGASignatureDB.cpp
@@ -216,6 +214,7 @@ add_library(core
   PowerPC/JitInterface.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.cpp
   PowerPC/CachedInterpreter/InterpreterBlockCache.cpp
+  PowerPC/ConditionRegister.cpp
   PowerPC/Interpreter/Interpreter_Branch.cpp
   PowerPC/Interpreter/Interpreter.cpp
   PowerPC/Interpreter/Interpreter_FloatingPoint.cpp
@@ -232,26 +231,36 @@ add_library(core
 
 if(_M_X86)
   target_sources(core PRIVATE
-    PowerPC/Jit64/FPURegCache.cpp
-    PowerPC/Jit64/GPRRegCache.cpp
-    PowerPC/Jit64/Jit64_Tables.cpp
-    PowerPC/Jit64/JitAsm.cpp
-    PowerPC/Jit64/Jit_Branch.cpp
+    DSP/Jit/x64/DSPEmitter.cpp
+    DSP/Jit/x64/DSPJitRegCache.cpp
+    DSP/Jit/x64/DSPJitExtOps.cpp
+    DSP/Jit/x64/DSPJitBranch.cpp
+    DSP/Jit/x64/DSPJitCCUtil.cpp
+    DSP/Jit/x64/DSPJitArithmetic.cpp
+    DSP/Jit/x64/DSPJitLoadStore.cpp
+    DSP/Jit/x64/DSPJitMisc.cpp
+    DSP/Jit/x64/DSPJitMultiplier.cpp
+    DSP/Jit/x64/DSPJitTables.cpp
+    DSP/Jit/x64/DSPJitUtil.cpp
     PowerPC/Jit64/Jit.cpp
+    PowerPC/Jit64/Jit64_Tables.cpp
+    PowerPC/Jit64/Jit_Branch.cpp
     PowerPC/Jit64/Jit_FloatingPoint.cpp
     PowerPC/Jit64/Jit_Integer.cpp
     PowerPC/Jit64/Jit_LoadStore.cpp
     PowerPC/Jit64/Jit_LoadStoreFloating.cpp
     PowerPC/Jit64/Jit_LoadStorePaired.cpp
     PowerPC/Jit64/Jit_Paired.cpp
-    PowerPC/Jit64/JitRegCache.cpp
     PowerPC/Jit64/Jit_SystemRegisters.cpp
+    PowerPC/Jit64/JitAsm.cpp
+    PowerPC/Jit64/RegCache/FPURegCache.cpp
+    PowerPC/Jit64/RegCache/GPRRegCache.cpp
+    PowerPC/Jit64/RegCache/JitRegCache.cpp
     PowerPC/Jit64Common/BlockCache.cpp
     PowerPC/Jit64Common/ConstantPool.cpp
     PowerPC/Jit64Common/EmuCodeBlock.cpp
     PowerPC/Jit64Common/FarCodeCache.cpp
     PowerPC/Jit64Common/Jit64AsmCommon.cpp
-    PowerPC/Jit64Common/Jit64Base.cpp
     PowerPC/Jit64Common/TrampolineCache.cpp
   )
 elseif(_M_ARM_64)
@@ -289,12 +298,17 @@ PUBLIC
   videonull
   videoogl
   videosoftware
+  videovulkan
 
 PRIVATE
-  bdisasm
   ${LZO}
   ZLIB::ZLIB
 )
+
+if ((DEFINED CMAKE_ANDROID_ARCH_ABI AND CMAKE_ANDROID_ARCH_ABI MATCHES "x86|x86_64") OR
+    (NOT DEFINED CMAKE_ANDROID_ARCH_ABI AND _M_X86))
+  target_link_libraries(core PRIVATE bdisasm)
+endif()
 
 if (APPLE)
   target_link_libraries(core
@@ -314,10 +328,6 @@ if(LIBUSB_FOUND)
   )
 endif()
 
-if(NOT APPLE)
-  target_link_libraries(core PUBLIC videovulkan)
-endif()
-
 if(WIN32)
   target_sources(core PRIVATE
     HW/EXI/BBA-TAP/TAP_Win32.cpp
@@ -325,6 +335,7 @@ if(WIN32)
   )
   target_link_libraries(core PUBLIC
     videod3d
+    videod3d12
     setupapi.lib
     iphlpapi.lib
   )

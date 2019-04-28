@@ -71,8 +71,15 @@ const ConfigInfo<bool> GFX_BORDERLESS_FULLSCREEN{{System::GFX, "Settings", "Bord
                                                  false};
 const ConfigInfo<bool> GFX_ENABLE_VALIDATION_LAYER{
     {System::GFX, "Settings", "EnableValidationLayer"}, false};
+
+#if defined(ANDROID)
+const ConfigInfo<bool> GFX_BACKEND_MULTITHREADING{
+    {System::GFX, "Settings", "BackendMultithreading"}, false};
+#else
 const ConfigInfo<bool> GFX_BACKEND_MULTITHREADING{
     {System::GFX, "Settings", "BackendMultithreading"}, true};
+#endif
+
 const ConfigInfo<int> GFX_COMMAND_BUFFER_EXECUTE_INTERVAL{
     {System::GFX, "Settings", "CommandBufferExecuteInterval"}, 100};
 const ConfigInfo<bool> GFX_SHADER_CACHE{{System::GFX, "Settings", "ShaderCache"}, true};
@@ -107,6 +114,10 @@ const ConfigInfo<bool> GFX_ENHANCE_FORCE_TRUE_COLOR{{System::GFX, "Enhancements"
                                                     true};
 const ConfigInfo<bool> GFX_ENHANCE_DISABLE_COPY_FILTER{
     {System::GFX, "Enhancements", "DisableCopyFilter"}, true};
+const ConfigInfo<bool> GFX_ENHANCE_ARBITRARY_MIPMAP_DETECTION{
+    {System::GFX, "Enhancements", "ArbitraryMipmapDetection"}, true};
+const ConfigInfo<float> GFX_ENHANCE_ARBITRARY_MIPMAP_DETECTION_THRESHOLD{
+    {System::GFX, "Enhancements", "ArbitraryMipmapDetectionThreshold"}, 14.0f};
 
 // Graphics.Stereoscopy
 
@@ -125,9 +136,11 @@ const ConfigInfo<int> GFX_STEREO_DEPTH_PERCENTAGE{
 // Graphics.Hacks
 
 const ConfigInfo<bool> GFX_HACK_EFB_ACCESS_ENABLE{{System::GFX, "Hacks", "EFBAccessEnable"}, true};
+const ConfigInfo<bool> GFX_HACK_EFB_DEFER_INVALIDATION{
+    {System::GFX, "Hacks", "EFBAccessDeferInvalidation"}, false};
+const ConfigInfo<int> GFX_HACK_EFB_ACCESS_TILE_SIZE{{System::GFX, "Hacks", "EFBAccessTileSize"},
+                                                    64};
 const ConfigInfo<bool> GFX_HACK_BBOX_ENABLE{{System::GFX, "Hacks", "BBoxEnable"}, false};
-const ConfigInfo<bool> GFX_HACK_BBOX_PREFER_STENCIL_IMPLEMENTATION{
-    {System::GFX, "Hacks", "BBoxPreferStencilImplementation"}, false};
 const ConfigInfo<bool> GFX_HACK_FORCE_PROGRESSIVE{{System::GFX, "Hacks", "ForceProgressive"}, true};
 const ConfigInfo<bool> GFX_HACK_SKIP_EFB_COPY_TO_RAM{{System::GFX, "Hacks", "EFBToTextureEnable"},
                                                      true};
@@ -135,6 +148,7 @@ const ConfigInfo<bool> GFX_HACK_SKIP_XFB_COPY_TO_RAM{{System::GFX, "Hacks", "XFB
                                                      true};
 const ConfigInfo<bool> GFX_HACK_DISABLE_COPY_TO_VRAM{{System::GFX, "Hacks", "DisableCopyToVRAM"},
                                                      false};
+const ConfigInfo<bool> GFX_HACK_DEFER_EFB_COPIES{{System::GFX, "Hacks", "DeferEFBCopies"}, true};
 const ConfigInfo<bool> GFX_HACK_IMMEDIATE_XFB{{System::GFX, "Hacks", "ImmediateXFBEnable"}, false};
 const ConfigInfo<bool> GFX_HACK_COPY_EFB_SCALED{{System::GFX, "Hacks", "EFBScaledCopy"}, true};
 const ConfigInfo<bool> GFX_HACK_EFB_EMULATE_FORMAT_CHANGES{

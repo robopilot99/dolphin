@@ -55,11 +55,7 @@
 #define UNSUPPORTED_WSAPOLL 0
 #endif
 
-namespace IOS
-{
-namespace HLE
-{
-namespace Device
+namespace IOS::HLE::Device
 {
 enum SOResultCode : s32
 {
@@ -882,10 +878,11 @@ IPCCommandResult NetIPTop::HandleGetInterfaceOptRequest(const IOCtlVRequest& req
     break;
 
   case 0x1004:  // mac address
-    u8 address[Common::MAC_ADDRESS_SIZE];
-    IOS::Net::GetMACAddress(address);
-    Memory::CopyToEmu(request.io_vectors[0].address, address, sizeof(address));
+  {
+    const Common::MACAddress address = IOS::Net::GetMACAddress();
+    Memory::CopyToEmu(request.io_vectors[0].address, address.data(), address.size());
     break;
+  }
 
   case 0x1005:  // link state
     Memory::Write_U32(1, request.io_vectors[0].address);
@@ -975,7 +972,7 @@ IPCCommandResult NetIPTop::HandleGetAddressInfoRequest(const IOCtlVRequest& requ
   // So we have to do a bit of juggling here.
   std::string nodeNameStr;
   const char* pNodeName = nullptr;
-  if (request.in_vectors.size() > 0 && request.in_vectors[0].size > 0)
+  if (!request.in_vectors.empty() && request.in_vectors[0].size > 0)
   {
     nodeNameStr = Memory::GetString(request.in_vectors[0].address, request.in_vectors[0].size);
     pNodeName = nodeNameStr.c_str();
@@ -1111,6 +1108,4 @@ IPCCommandResult NetIPTop::HandleICMPPingRequest(const IOCtlVRequest& request)
   // TODO proper error codes
   return GetDefaultReply(0);
 }
-}  // namespace Device
-}  // namespace HLE
-}  // namespace IOS
+}  // namespace IOS::HLE::Device

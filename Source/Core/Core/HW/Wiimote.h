@@ -4,6 +4,9 @@
 
 #pragma once
 
+#include <array>
+#include <atomic>
+
 #include "Common/Common.h"
 #include "Common/CommonTypes.h"
 
@@ -23,7 +26,7 @@ enum class ClassicGroup;
 enum class GuitarGroup;
 enum class DrumsGroup;
 enum class TurntableGroup;
-}
+}  // namespace WiimoteEmu
 
 enum
 {
@@ -45,7 +48,7 @@ enum
   WIIMOTE_SRC_REAL = 2,
 };
 
-extern unsigned int g_wiimote_sources[MAX_BBMOTES];
+extern std::array<std::atomic<u32>, MAX_BBMOTES> g_wiimote_sources;
 
 namespace Wiimote
 {
@@ -54,6 +57,9 @@ enum class InitializeMode
   DO_WAIT_FOR_WIIMOTES,
   DO_NOT_WAIT_FOR_WIIMOTES,
 };
+
+// The Real Wii Remote sends report every ~5ms (200 Hz).
+constexpr int UPDATE_FREQ = 200;
 
 void Shutdown();
 void Initialize(InitializeMode init_mode);
@@ -78,7 +84,7 @@ void InterruptChannel(int number, u16 channel_id, const void* data, u32 size);
 bool ButtonPressed(int number);
 void Update(int number, bool connected);
 bool NetPlay_GetButtonPress(int wiimote, bool pressed);
-}
+}  // namespace Wiimote
 
 namespace WiimoteReal
 {
@@ -90,4 +96,4 @@ void Pause();
 void Refresh();
 
 void LoadSettings();
-}
+}  // namespace WiimoteReal

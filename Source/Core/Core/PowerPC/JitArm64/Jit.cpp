@@ -36,6 +36,12 @@ constexpr size_t SAFE_STACK_SIZE = 512 * 1024;
 constexpr size_t GUARD_SIZE = 0x10000;  // two guards - bottom (permanent) and middle (see above)
 constexpr size_t GUARD_OFFSET = STACK_SIZE - SAFE_STACK_SIZE - GUARD_SIZE;
 
+JitArm64::JitArm64() : m_float_emit(this)
+{
+}
+
+JitArm64::~JitArm64() = default;
+
 void JitArm64::Init()
 {
   InitializeInstructionTables();
@@ -483,9 +489,9 @@ void JitArm64::WriteExceptionExit(ARM64Reg dest, bool only_external)
 
 void JitArm64::DumpCode(const u8* start, const u8* end)
 {
-  std::string output = "";
-  for (u8* code = (u8*)start; code < end; code += 4)
-    output += StringFromFormat("%08x", Common::swap32(*(u32*)code));
+  std::string output;
+  for (const u8* code = start; code < end; code += sizeof(u32))
+    output += StringFromFormat("%08x", Common::swap32(code));
   WARN_LOG(DYNA_REC, "Code dump from %p to %p:\n%s", start, end, output.c_str());
 }
 
@@ -504,7 +510,7 @@ void JitArm64::BeginTimeProfile(JitBlock* b)
 
 void JitArm64::EndTimeProfile(JitBlock* b)
 {
-  if (!Profiler::g_ProfileBlocks)
+  if (!jo.profile_blocks)
     return;
 
   // Fetch the current counter register
@@ -553,7 +559,7 @@ void JitArm64::Jit(u32)
     ClearCache();
   }
 
-  std::size_t block_size = code_buffer.size();
+  std::size_t block_size = m_code_buffer.size();
   const u32 em_address = PowerPC::ppcState.pc;
 
   if (SConfig::GetInstance().bEnableDebugging)
@@ -565,7 +571,7 @@ void JitArm64::Jit(u32)
   // Analyze the block, collect all instructions it is made of (including inlining,
   // if that is enabled), reorder instructions for optimal performance, and join joinable
   // instructions.
-  const u32 nextPC = analyzer.Analyze(em_address, &code_block, &code_buffer, block_size);
+  const u32 nextPC = analyzer.Analyze(em_address, &code_block, &m_code_buffer, block_size);
 
   if (code_block.m_memory_exception)
   {
@@ -601,7 +607,7 @@ void JitArm64::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
   js.curBlock = b;
   js.carryFlagSet = false;
 
-  const u8* start = GetCodePtr();
+  u8* const start = GetWritableCodePtr();
   b->checkedEntry = start;
 
   // Downcount flag check, Only valid for linked blocks
@@ -613,10 +619,10 @@ void JitArm64::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
   }
 
   // Normal entry doesn't need to check for downcount.
-  b->normalEntry = GetCodePtr();
+  b->normalEntry = GetWritableCodePtr();
 
   // Conditionally add profiling code.
-  if (Profiler::g_ProfileBlocks)
+  if (jo.profile_blocks)
   {
     // get start tic
     BeginTimeProfile(b);
@@ -651,7 +657,7 @@ void JitArm64::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
   // Translate instructions
   for (u32 i = 0; i < code_block.m_num_instructions; i++)
   {
-    PPCAnalyst::CodeOp& op = code_buffer[i];
+    PPCAnalyst::CodeOp& op = m_code_buffer[i];
 
     js.compilerPC = op.address;
     js.op = &op;

@@ -20,8 +20,10 @@
 #include "Common/ChunkFile.h"
 #include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
+#include "Common/File.h"
 #include "Common/FileUtil.h"
 #include "Common/Hash.h"
+#include "Common/HttpRequest.h"
 #include "Common/Image.h"
 #include "Common/IniFile.h"
 #include "Common/NandPaths.h"
@@ -29,6 +31,7 @@
 #include "Common/Swap.h"
 
 #include "Core/Boot/Boot.h"
+#include "Core/Config/UISettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/IOS/ES/Formats.h"
 #include "Core/TitleDatabase.h"
@@ -38,9 +41,33 @@
 #include "DiscIO/Volume.h"
 #include "DiscIO/WiiSaveBanner.h"
 
+constexpr const char* COVER_URL = "https://art.gametdb.com/wii/cover/%s/%s.png";
+
 namespace UICommon
 {
 static const std::string EMPTY_STRING;
+
+static bool UseGameCovers()
+{
+// We ifdef this out on Android because accessing the config before emulation start makes us crash.
+// The Android GUI handles covers in Java anyway, so this doesn't make us lose any functionality.
+#ifdef ANDROID
+  return false;
+#else
+  return Config::Get(Config::MAIN_USE_GAME_COVERS);
+#endif
+}
+
+DiscIO::Language GameFile::GetConfigLanguage() const
+{
+#ifdef ANDROID
+  // TODO: Make the Android app load the config at app start instead of emulation start
+  // so that we can access the user's preference here
+  return DiscIO::Language::English;
+#else
+  return SConfig::GetInstance().GetCurrentLanguage(DiscIO::IsWii(m_platform));
+#endif
+}
 
 bool operator==(const GameBanner& lhs, const GameBanner& rhs)
 {
@@ -78,8 +105,7 @@ const std::string& GameFile::Lookup(DiscIO::Language language,
 const std::string&
 GameFile::LookupUsingConfigLanguage(const std::map<DiscIO::Language, std::string>& strings) const
 {
-  const bool wii = DiscIO::IsWii(m_platform);
-  return Lookup(SConfig::GetInstance().GetCurrentLanguage(wii), strings);
+  return Lookup(GetConfigLanguage(), strings);
 }
 
 GameFile::GameFile(const std::string& path)
@@ -109,6 +135,7 @@ GameFile::GameFile(const std::string& path)
 
       m_internal_name = volume->GetInternalName();
       m_game_id = volume->GetGameID();
+      m_gametdb_id = volume->GetGameTDBID();
       m_title_id = volume->GetTitleID().value_or(0);
       m_maker_id = volume->GetMakerID();
       m_revision = volume->GetRevision().value_or(0);
@@ -124,7 +151,7 @@ GameFile::GameFile(const std::string& path)
   if (!IsValid() && IsElfOrDol())
   {
     m_valid = true;
-    m_file_size = File::GetSize(m_file_path);
+    m_file_size = m_volume_size = File::GetSize(m_file_path);
     m_platform = DiscIO::Platform::ELFOrDOL;
     m_blob_type = DiscIO::BlobType::DIRECTORY;
   }
@@ -141,18 +168,127 @@ bool GameFile::IsValid() const
   return true;
 }
 
-bool GameFile::CustomNameChanged(const Core::TitleDatabase& title_database)
+bool GameFile::CustomCoverChanged()
 {
-  const auto type = m_platform == DiscIO::Platform::WiiWAD ?
-                        Core::TitleDatabase::TitleType::Channel :
-                        Core::TitleDatabase::TitleType::Other;
-  m_pending.custom_name = title_database.GetTitleName(m_game_id, type);
-  return m_custom_name != m_pending.custom_name;
+  if (!m_custom_cover.buffer.empty() || !UseGameCovers())
+    return false;
+
+  std::string path, name;
+  SplitPath(m_file_path, &path, &name, nullptr);
+
+  std::string contents;
+
+  // This icon naming format is intended as an alternative to Homebrew Channel icons
+  // for those who don't want to have a Homebrew Channel style folder structure.
+  bool success = File::Exists(path + name + ".cover.png") &&
+                 File::ReadFileToString(path + name + ".cover.png", contents);
+
+  if (!success)
+  {
+    success =
+        File::Exists(path + "cover.png") && File::ReadFileToString(path + "cover.png", contents);
+  }
+
+  if (success)
+    m_pending.custom_cover.buffer = {contents.begin(), contents.end()};
+
+  return success;
 }
 
-void GameFile::CustomNameCommit()
+void GameFile::DownloadDefaultCover()
 {
-  m_custom_name = std::move(m_pending.custom_name);
+  if (!m_default_cover.buffer.empty() || !UseGameCovers())
+    return;
+
+  const auto cover_path = File::GetUserPath(D_COVERCACHE_IDX) + DIR_SEP;
+
+  // If the cover has already been downloaded, abort
+  if (File::Exists(cover_path + m_gametdb_id + ".png"))
+    return;
+
+  Common::HttpRequest request;
+
+  std::string region_code;
+
+  auto user_lang = SConfig::GetInstance().GetCurrentLanguage(DiscIO::IsWii(GetPlatform()));
+
+  switch (m_region)
+  {
+  case DiscIO::Region::NTSC_J:
+    region_code = "JA";
+    break;
+  case DiscIO::Region::NTSC_U:
+    region_code = "US";
+    break;
+  case DiscIO::Region::NTSC_K:
+    region_code = "KO";
+    break;
+  case DiscIO::Region::PAL:
+    switch (user_lang)
+    {
+    case DiscIO::Language::German:
+      region_code = "DE";
+      break;
+    case DiscIO::Language::French:
+      region_code = "FR";
+      break;
+    case DiscIO::Language::Spanish:
+      region_code = "ES";
+      break;
+    case DiscIO::Language::Italian:
+      region_code = "IT";
+      break;
+    case DiscIO::Language::Dutch:
+      region_code = "NL";
+      break;
+    case DiscIO::Language::English:
+    default:
+      region_code = "EN";
+      break;
+    }
+    break;
+  case DiscIO::Region::Unknown:
+    region_code = "EN";
+    break;
+  }
+
+  auto response =
+      request.Get(StringFromFormat(COVER_URL, region_code.c_str(), m_gametdb_id.c_str()));
+
+  if (response)
+  {
+    File::WriteStringToFile(std::string(response.value().begin(), response.value().end()),
+                            cover_path + m_gametdb_id + ".png");
+  }
+}
+
+bool GameFile::DefaultCoverChanged()
+{
+  if (!m_default_cover.buffer.empty() || !UseGameCovers())
+    return false;
+
+  const auto cover_path = File::GetUserPath(D_COVERCACHE_IDX) + DIR_SEP;
+
+  std::string contents;
+
+  File::ReadFileToString(cover_path + m_gametdb_id + ".png", contents);
+
+  if (contents.empty())
+    return false;
+
+  m_pending.default_cover.buffer = {contents.begin(), contents.end()};
+
+  return true;
+}
+
+void GameFile::CustomCoverCommit()
+{
+  m_custom_cover = std::move(m_pending.custom_cover);
+}
+
+void GameFile::DefaultCoverCommit()
+{
+  m_default_cover = std::move(m_pending.default_cover);
 }
 
 void GameBanner::DoState(PointerWrap& p)
@@ -160,6 +296,11 @@ void GameBanner::DoState(PointerWrap& p)
   p.Do(buffer);
   p.Do(width);
   p.Do(height);
+}
+
+void GameCover::DoState(PointerWrap& p)
+{
+  p.Do(buffer);
 }
 
 void GameFile::DoState(PointerWrap& p)
@@ -178,6 +319,7 @@ void GameFile::DoState(PointerWrap& p)
   p.Do(m_descriptions);
   p.Do(m_internal_name);
   p.Do(m_game_id);
+  p.Do(m_gametdb_id);
   p.Do(m_title_id);
   p.Do(m_maker_id);
 
@@ -191,7 +333,8 @@ void GameFile::DoState(PointerWrap& p)
 
   m_volume_banner.DoState(p);
   m_custom_banner.DoState(p);
-  p.Do(m_custom_name);
+  m_default_cover.DoState(p);
+  m_custom_cover.DoState(p);
 }
 
 bool GameFile::IsElfOrDol() const
@@ -280,11 +423,14 @@ void GameFile::CustomBannerCommit()
   m_custom_banner = std::move(m_pending.custom_banner);
 }
 
+const std::string& GameFile::GetName(const Core::TitleDatabase& title_database) const
+{
+  const std::string& custom_name = title_database.GetTitleName(m_gametdb_id, GetConfigLanguage());
+  return custom_name.empty() ? GetName() : custom_name;
+}
+
 const std::string& GameFile::GetName(bool long_name) const
 {
-  if (!m_custom_name.empty())
-    return m_custom_name;
-
   const std::string& name = long_name ? GetLongName() : GetShortName();
   if (!name.empty())
     return name;
@@ -309,23 +455,20 @@ std::vector<DiscIO::Language> GameFile::GetLanguages() const
 {
   std::vector<DiscIO::Language> languages;
   // TODO: What if some languages don't have long names but have other strings?
-  for (std::pair<DiscIO::Language, std::string> name : m_long_names)
+  for (const auto& name : m_long_names)
     languages.push_back(name.first);
   return languages;
 }
 
 std::string GameFile::GetUniqueIdentifier() const
 {
-  const DiscIO::Language lang = DiscIO::Language::English;
   std::vector<std::string> info;
   if (!GetGameID().empty())
     info.push_back(GetGameID());
   if (GetRevision() != 0)
     info.push_back("Revision " + std::to_string(GetRevision()));
 
-  std::string name(GetLongName(lang));
-  if (name.empty())
-    name = GetName();
+  const std::string& name = GetName();
 
   int disc_number = GetDiscNumber() + 1;
 
@@ -355,6 +498,11 @@ std::string GameFile::GetWiiFSPath() const
 const GameBanner& GameFile::GetBannerImage() const
 {
   return m_custom_banner.empty() ? m_volume_banner : m_custom_banner;
+}
+
+const GameCover& GameFile::GetCoverImage() const
+{
+  return m_custom_cover.empty() ? m_default_cover : m_custom_cover;
 }
 
 }  // namespace UICommon

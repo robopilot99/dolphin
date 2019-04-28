@@ -18,11 +18,7 @@
 
 class PointerWrap;
 
-namespace IOS
-{
-namespace HLE
-{
-namespace Device
+namespace IOS::HLE::Device
 {
 struct TitleContext
 {
@@ -41,7 +37,7 @@ class ES final : public Device
 public:
   ES(Kernel& ios, const std::string& device_name);
 
-  s32 DIVerify(const IOS::ES::TMDReader& tmd, const IOS::ES::TicketReader& ticket);
+  ReturnCode DIVerify(const IOS::ES::TMDReader& tmd, const IOS::ES::TicketReader& ticket);
   bool LaunchTitle(u64 title_id, bool skip_reload = false);
 
   void DoState(PointerWrap& p) override;
@@ -143,6 +139,27 @@ public:
                             u32* handle);
 
   bool CreateTitleDirectories(u64 title_id, u16 group_id) const;
+
+  enum class VerifyContainerType
+  {
+    TMD,
+    Ticket,
+    Device,
+  };
+  enum class VerifyMode
+  {
+    // Whether or not new certificates should be added to the certificate store (/sys/cert.sys).
+    DoNotUpdateCertStore,
+    UpdateCertStore,
+  };
+  // On success, if issuer_handle is non-null, the IOSC object for the issuer will be written to it.
+  // The caller is responsible for using IOSC_DeleteObject.
+  ReturnCode VerifyContainer(VerifyContainerType type, VerifyMode mode,
+                             const IOS::ES::SignedBlobReader& signed_blob,
+                             const std::vector<u8>& cert_chain, u32* issuer_handle = nullptr);
+  ReturnCode VerifyContainer(VerifyContainerType type, VerifyMode mode,
+                             const IOS::ES::CertReader& certificate,
+                             const std::vector<u8>& cert_chain, u32 certificate_iosc_handle);
 
 private:
   enum
@@ -312,29 +329,9 @@ private:
   ReturnCode CheckStreamKeyPermissions(u32 uid, const u8* ticket_view,
                                        const IOS::ES::TMDReader& tmd) const;
 
-  enum class VerifyContainerType
-  {
-    TMD,
-    Ticket,
-    Device,
-  };
-  enum class VerifyMode
-  {
-    // Whether or not new certificates should be added to the certificate store (/sys/cert.sys).
-    DoNotUpdateCertStore,
-    UpdateCertStore,
-  };
   bool IsIssuerCorrect(VerifyContainerType type, const IOS::ES::CertReader& issuer_cert) const;
   ReturnCode ReadCertStore(std::vector<u8>* buffer) const;
   ReturnCode WriteNewCertToStore(const IOS::ES::CertReader& cert);
-  // On success, if issuer_handle is non-null, the IOSC object for the issuer will be written to it.
-  // The caller is responsible for using IOSC_DeleteObject.
-  ReturnCode VerifyContainer(VerifyContainerType type, VerifyMode mode,
-                             const IOS::ES::SignedBlobReader& signed_blob,
-                             const std::vector<u8>& cert_chain, u32* issuer_handle = nullptr);
-  ReturnCode VerifyContainer(VerifyContainerType type, VerifyMode mode,
-                             const IOS::ES::CertReader& certificate,
-                             const std::vector<u8>& cert_chain, u32 certificate_iosc_handle);
 
   // Start a title import.
   bool InitImport(const IOS::ES::TMDReader& tmd);
@@ -365,6 +362,4 @@ private:
   ContextArray m_contexts;
   TitleContext m_title_context{};
 };
-}  // namespace Device
-}  // namespace HLE
-}  // namespace IOS
+}  // namespace IOS::HLE::Device

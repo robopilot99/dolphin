@@ -74,6 +74,7 @@
 #include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/RenderBase.h"
 #include "VideoCommon/VideoBackendBase.h"
+#include "VideoCommon/VideoConfig.h"
 
 namespace Core
 {
@@ -88,7 +89,6 @@ static bool s_is_stopping = false;
 static bool s_hardware_initialized = false;
 static bool s_is_started = false;
 static Common::Flag s_is_booting;
-static void* s_window_handle = nullptr;
 static std::thread s_emu_thread;
 static StateChangedCallbackFunc s_on_state_changed_callback;
 
@@ -107,7 +107,7 @@ static std::queue<HostJob> s_host_jobs_queue;
 
 static thread_local bool tls_is_cpu_thread = false;
 
-static void EmuThread(std::unique_ptr<BootParameters> boot);
+static void EmuThread(std::unique_ptr<BootParameters> boot, WindowSystemInfo wsi);
 
 bool GetIsThrottlerTempDisabled()
 {
@@ -122,7 +122,7 @@ void SetIsThrottlerTempDisabled(bool disable)
 void FrameUpdateOnCPUThread()
 {
   if (NetPlay::IsNetPlayRunning())
-    NetPlayClient::SendTimeBase();
+    NetPlay::NetPlayClient::SendTimeBase();
 }
 
 // Display messages and return values
@@ -190,7 +190,7 @@ bool WantsDeterminism()
 
 // This is called from the GUI thread. See the booting call schedule in
 // BootManager.cpp
-bool Init(std::unique_ptr<BootParameters> boot)
+bool Init(std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi)
 {
   if (s_emu_thread.joinable())
   {
@@ -214,10 +214,11 @@ bool Init(std::unique_ptr<BootParameters> boot)
 
   Host_UpdateMainFrame();  // Disable any menus or buttons at boot
 
-  s_window_handle = Host_GetRenderHandle();
+  // Issue any API calls which must occur on the main thread for the graphics backend.
+  g_video_backend->PrepareWindow(wsi);
 
   // Start the emu thread
-  s_emu_thread = std::thread(EmuThread, std::move(boot));
+  s_emu_thread = std::thread(EmuThread, std::move(boot), wsi);
   return true;
 }
 
@@ -226,23 +227,25 @@ static void ResetRumble()
 #if defined(__LIBUSB__)
   GCAdapter::ResetRumble();
 #endif
-#if defined(CIFACE_USE_XINPUT) || defined(CIFACE_USE_DINPUT)
   if (!Pad::IsInitialized())
     return;
   for (int i = 0; i < 4; ++i)
     Pad::ResetRumble(i);
-#endif
 }
 
 // Called from GUI thread
 void Stop()  // - Hammertime!
 {
-  if (GetState() == State::Stopping)
+  if (GetState() == State::Stopping || GetState() == State::Uninitialized)
     return;
 
   const SConfig& _CoreParameter = SConfig::GetInstance();
 
   s_is_stopping = true;
+
+  // Notify state changed callback
+  if (s_on_state_changed_callback)
+    s_on_state_changed_callback(State::Stopping);
 
   // Dump left over jobs
   HostDispatchJobs();
@@ -388,7 +391,7 @@ static void FifoPlayerThread(const std::optional<std::string>& savestate_path,
 // Initialize and create emulation thread
 // Call browser: Init():s_emu_thread().
 // See the BootManager.cpp file description for a complete call schedule.
-static void EmuThread(std::unique_ptr<BootParameters> boot)
+static void EmuThread(std::unique_ptr<BootParameters> boot, WindowSystemInfo wsi)
 {
   const SConfig& core_parameter = SConfig::GetInstance();
   s_is_booting.Set();
@@ -434,7 +437,13 @@ static void EmuThread(std::unique_ptr<BootParameters> boot)
     HLE::Clear();
   }};
 
-  if (!g_video_backend->Initialize(s_window_handle))
+  // Backend info has to be initialized before we can initialize the backend.
+  // This is because when we load the config, we validate it against the current backend info.
+  // We also should have the correct adapter selected for creating the device in Initialize().
+  g_video_backend->InitBackendInfo();
+  g_Config.Refresh();
+
+  if (!g_video_backend->Initialize(wsi))
   {
     PanicAlert("Failed to initialize video backend!");
     return;
@@ -452,17 +461,21 @@ static void EmuThread(std::unique_ptr<BootParameters> boot)
     return;
   }
 
+  // The frontend will likely have initialized the controller interface, as it needs
+  // it to provide the configuration dialogs. In this case, instead of re-initializing
+  // entirely, we switch the window used for inputs to the render window. This way, the
+  // cursor position is relative to the render window, instead of the main window.
   bool init_controllers = false;
   if (!g_controller_interface.IsInit())
   {
-    g_controller_interface.Initialize(s_window_handle);
+    g_controller_interface.Initialize(wsi);
     Pad::Initialize();
     Keyboard::Initialize();
     init_controllers = true;
   }
   else
   {
-    // Update references in case controllers were refreshed
+    g_controller_interface.ChangeWindow(wsi.render_surface);
     Pad::LoadConfig();
     Keyboard::LoadConfig();
   }
@@ -471,24 +484,31 @@ static void EmuThread(std::unique_ptr<BootParameters> boot)
   const bool delete_savestate = boot->delete_savestate;
 
   // Load and Init Wiimotes - only if we are booting in Wii mode
+  bool init_wiimotes = false;
   if (core_parameter.bWii && !SConfig::GetInstance().m_bt_passthrough_enabled)
   {
     if (init_controllers)
     {
       Wiimote::Initialize(savestate_path ? Wiimote::InitializeMode::DO_WAIT_FOR_WIIMOTES :
                                            Wiimote::InitializeMode::DO_NOT_WAIT_FOR_WIIMOTES);
+      init_wiimotes = true;
     }
     else
     {
       Wiimote::LoadConfig();
     }
+
+    if (NetPlay::IsNetPlayRunning())
+      NetPlay::SetupWiimotes();
   }
 
-  Common::ScopeGuard controller_guard{[init_controllers] {
+  Common::ScopeGuard controller_guard{[init_controllers, init_wiimotes] {
     if (!init_controllers)
       return;
 
-    Wiimote::Shutdown();
+    if (init_wiimotes)
+      Wiimote::Shutdown();
+
     Keyboard::Shutdown();
     Pad::Shutdown();
     g_controller_interface.Shutdown();
@@ -530,7 +550,7 @@ static void EmuThread(std::unique_ptr<BootParameters> boot)
   Fifo::Prepare();
 
   // Setup our core, but can't use dynarec if we are compare server
-  if (core_parameter.iCPUCore != PowerPC::CORE_INTERPRETER &&
+  if (core_parameter.cpu_core != PowerPC::CPUCore::Interpreter &&
       (!core_parameter.bRunCompareServer || core_parameter.bRunCompareClient))
   {
     PowerPC::SetMode(PowerPC::CoreMode::JIT);
@@ -756,20 +776,6 @@ void VideoThrottle()
   s_drawn_video++;
 }
 
-// Executed from GPU thread
-// reports if a frame should be skipped or not
-// depending on the emulation speed set
-bool ShouldSkipFrame(int skipped)
-{
-  u32 TargetFPS = VideoInterface::GetTargetRefreshRate();
-  if (SConfig::GetInstance().m_EmulationSpeed > 0.0f)
-    TargetFPS = u32(TargetFPS * SConfig::GetInstance().m_EmulationSpeed);
-  const u32 frames = s_drawn_frame.load();
-  const bool fps_slow = !(s_timer.GetTimeDifference() < (frames + skipped) * 1000 / TargetFPS);
-
-  return fps_slow;
-}
-
 // --- Callbacks for backends / engine ---
 
 // Should be called from GPU thread when a frame is drawn
@@ -965,4 +971,4 @@ void DoFrameStep()
   }
 }
 
-}  // Core
+}  // namespace Core

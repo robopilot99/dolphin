@@ -11,7 +11,7 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/Gekko.h"
-#include "Core/PowerPC/Jit64Common/Jit64Base.h"
+#include "Core/PowerPC/Jit64Common/Jit64Constants.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PowerPC.h"
 
@@ -48,9 +48,7 @@ struct CachedInterpreter::Instruction
   Type type = Type::Abort;
 };
 
-CachedInterpreter::CachedInterpreter() : code_buffer(32000)
-{
-}
+CachedInterpreter::CachedInterpreter() = default;
 
 CachedInterpreter::~CachedInterpreter() = default;
 
@@ -73,9 +71,9 @@ void CachedInterpreter::Shutdown()
   m_block_cache.Shutdown();
 }
 
-const u8* CachedInterpreter::GetCodePtr() const
+u8* CachedInterpreter::GetCodePtr()
 {
-  return reinterpret_cast<const u8*>(m_code.data() + m_code.size());
+  return reinterpret_cast<u8*>(m_code.data() + m_code.size());
 }
 
 void CachedInterpreter::ExecuteOneBlock()
@@ -111,6 +109,7 @@ void CachedInterpreter::ExecuteOneBlock()
 
 void CachedInterpreter::Run()
 {
+  const CPU::State* state_ptr = CPU::GetStatePtr();
   while (CPU::GetState() == CPU::State::Running)
   {
     // Start new timing slice
@@ -120,7 +119,7 @@ void CachedInterpreter::Run()
     do
     {
       ExecuteOneBlock();
-    } while (PowerPC::ppcState.downcount > 0);
+    } while (PowerPC::ppcState.downcount > 0 && *state_ptr == CPU::State::Running);
   }
 }
 
@@ -171,6 +170,26 @@ static bool CheckDSI(u32 data)
   return false;
 }
 
+static bool CheckBreakpoint(u32 data)
+{
+  PowerPC::CheckBreakPoints();
+  if (CPU::GetState() != CPU::State::Running)
+  {
+    PowerPC::ppcState.downcount -= data;
+    return true;
+  }
+  return false;
+}
+
+static bool CheckIdle(u32 idle_pc)
+{
+  if (PowerPC::ppcState.npc == idle_pc)
+  {
+    CoreTiming::Idle();
+  }
+  return false;
+}
+
 bool CachedInterpreter::HandleFunctionHooking(u32 address)
 {
   return HLE::ReplaceFunctionIfPossible(address, [&](u32 function, HLE::HookType type) {
@@ -194,7 +213,7 @@ void CachedInterpreter::Jit(u32 address)
     ClearCache();
   }
 
-  const u32 nextPC = analyzer.Analyze(PC, &code_block, &code_buffer, code_buffer.size());
+  const u32 nextPC = analyzer.Analyze(PC, &code_block, &m_code_buffer, m_code_buffer.size());
   if (code_block.m_memory_exception)
   {
     // Address of instruction could not be translated
@@ -218,7 +237,7 @@ void CachedInterpreter::Jit(u32 address)
 
   for (u32 i = 0; i < code_block.m_num_instructions; i++)
   {
-    PPCAnalyst::CodeOp& op = code_buffer[i];
+    PPCAnalyst::CodeOp& op = m_code_buffer[i];
 
     js.downcountAmount += op.opinfo->numCycles;
 
@@ -227,9 +246,18 @@ void CachedInterpreter::Jit(u32 address)
 
     if (!op.skip)
     {
+      const bool breakpoint = SConfig::GetInstance().bEnableDebugging &&
+                              PowerPC::breakpoints.IsAddressBreakPoint(op.address);
       const bool check_fpu = (op.opinfo->flags & FL_USE_FPU) && !js.firstFPInstructionFound;
       const bool endblock = (op.opinfo->flags & FL_ENDBLOCK) != 0;
       const bool memcheck = (op.opinfo->flags & FL_LOADSTORE) && jo.memcheck;
+      const bool idle_loop = op.branchIsIdleLoop;
+
+      if (breakpoint)
+      {
+        m_code.emplace_back(WritePC, op.address);
+        m_code.emplace_back(CheckBreakpoint, js.downcountAmount);
+      }
 
       if (check_fpu)
       {
@@ -243,6 +271,8 @@ void CachedInterpreter::Jit(u32 address)
       m_code.emplace_back(PPCTables::GetInterpreterOp(op.inst), op.inst);
       if (memcheck)
         m_code.emplace_back(CheckDSI, js.downcountAmount);
+      if (idle_loop)
+        m_code.emplace_back(CheckIdle, js.blockStart);
       if (endblock)
         m_code.emplace_back(EndBlock, js.downcountAmount);
     }

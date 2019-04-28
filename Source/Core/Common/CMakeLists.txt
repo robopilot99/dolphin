@@ -11,6 +11,7 @@ add_library(common
   Crypto/ec.cpp
   Debug/MemoryPatches.cpp
   Debug/Watches.cpp
+  DynamicLibrary.cpp
   ENetUtil.cpp
   File.cpp
   FileSearch.cpp
@@ -24,6 +25,7 @@ add_library(common
   JitRegister.cpp
   Logging/LogManager.cpp
   MathUtil.cpp
+  Matrix.cpp
   MD5.cpp
   MemArena.cpp
   MemoryUtil.cpp
@@ -34,7 +36,9 @@ add_library(common
   PerformanceCounter.cpp
   Profiler.cpp
   QoSSession.cpp
+  Random.cpp
   SDCardUtil.cpp
+  SFMLHelper.cpp
   SettingsHandler.cpp
   StringUtil.cpp
   SymbolDB.cpp
@@ -43,8 +47,6 @@ add_library(common
   TraversalClient.cpp
   UPnP.cpp
   Version.cpp
-  x64ABI.cpp
-  x64Emitter.cpp
 )
 
 target_link_libraries(common
@@ -71,6 +73,7 @@ endif()
 
 if(ANDROID)
   target_sources(common PRIVATE
+    AndroidAnalytics.cpp
     Logging/ConsoleListenerDroid.cpp
   )
 elseif(WIN32)
@@ -92,6 +95,8 @@ if(_M_ARM_64)
 else()
   if(_M_X86) #X86
     target_sources(common PRIVATE
+      x64ABI.cpp
+      x64Emitter.cpp
       x64FPURoundMode.cpp
       x64CPUDetect.cpp
     )
@@ -107,17 +112,18 @@ endif()
 target_sources(common PRIVATE
   GL/GLUtil.cpp
   GL/GLExtensions/GLExtensions.cpp
-  GL/GLInterface/GLInterface.cpp
+  GL/GLContext.cpp
 )
 
-if(USE_EGL)
+if(ENABLE_EGL AND EGL_FOUND)
   target_sources(common PRIVATE GL/GLInterface/EGL.cpp)
   if(ANDROID)
     target_sources(common PRIVATE GL/GLInterface/EGLAndroid.cpp)
-  elseif(USE_X11)
+  elseif(ENABLE_X11 AND X11_FOUND)
     target_sources(common PRIVATE GL/GLInterface/EGLX11.cpp)
   endif()
-  target_link_libraries(common PUBLIC EGL)
+  target_include_directories(common PRIVATE ${EGL_INCLUDE_DIRS})
+  target_link_libraries(common PUBLIC ${EGL_LIBRARIES})
 endif()
 
 if(WIN32)
@@ -127,21 +133,17 @@ if(WIN32)
   )
 elseif(APPLE)
   target_sources(common PRIVATE GL/GLInterface/AGL.mm)
-elseif(HAIKU)
-  target_sources(common PRIVATE GL/GLInterface/BGL.cpp)
-  target_link_libraries(common PUBLIC be GL)
-elseif(USE_X11)
-  if (NOT USE_EGL)
-    target_sources(common PRIVATE GL/GLInterface/GLX.cpp)
-    # GLX has a hard dependency on libGL.
-    # Make sure to link to it if using GLX.
-    target_link_libraries(common PUBLIC ${OPENGL_LIBRARIES})
-  endif()
-  target_sources(common PRIVATE GL/GLInterface/X11_Util.cpp)
-  target_link_libraries(common PUBLIC ${XRANDR_LIBRARIES})
+elseif(ENABLE_X11 AND X11_FOUND)
+  target_sources(common PRIVATE
+    GL/GLX11Window.cpp
+    GL/GLInterface/GLX.cpp)
+
+  # GLX has a hard dependency on libGL.
+  # Make sure to link to it if using GLX.
+  target_link_libraries(common PUBLIC ${OPENGL_LIBRARIES})
 endif()
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(common PUBLIC dl rt)
 endif()
 
@@ -156,11 +158,9 @@ endif()
 if(UNIX)
   # Posix networking code needs to be fixed for Windows
   add_executable(traversal_server TraversalServer.cpp)
+  target_link_libraries(traversal_server PRIVATE common)
   if(SYSTEMD_FOUND)
-    target_link_libraries(traversal_server ${SYSTEMD_LIBRARIES})
-  endif()
-  if(HAIKU)
-    target_link_libraries(traversal_server network)
+    target_link_libraries(traversal_server PRIVATE ${SYSTEMD_LIBRARIES})
   endif()
 elseif(WIN32)
   target_link_libraries(common PRIVATE "-INCLUDE:enableCompatPatches")

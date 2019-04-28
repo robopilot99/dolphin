@@ -35,8 +35,6 @@ const u32 m_os = OS_ALL | OS_LINUX;
 const u32 m_os = OS_ALL | OS_FREEBSD;
 #elif __OpenBSD__
 const u32 m_os = OS_ALL | OS_OPENBSD;
-#elif __HAIKU__
-const u32 m_os = OS_ALL | OS_HAIKU;
 #endif
 
 static API m_api = API_OPENGL;
@@ -52,8 +50,6 @@ static BugInfo m_known_bugs[] = {
      BUG_BROKEN_BUFFER_STREAM, -1.0, -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
      BUG_BROKEN_NEGATED_BOOLEAN, -1.0, -1.0, true},
-    {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
-     BUG_BROKEN_EXPLICIT_FLUSH, -1.0, -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_BUFFER_STREAM, -1.0,
      -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_VSYNC, -1.0, -1.0,
@@ -104,11 +100,14 @@ static BugInfo m_known_bugs[] = {
      true},
     {API_OPENGL, OS_LINUX, VENDOR_MESA, DRIVER_I965, Family::UNKNOWN,
      BUG_SHARED_CONTEXT_SHADER_COMPILATION, -1.0, -1.0, true},
+    {API_OPENGL, OS_LINUX, VENDOR_MESA, DRIVER_NOUVEAU, Family::UNKNOWN,
+     BUG_SHARED_CONTEXT_SHADER_COMPILATION, -1.0, -1.0, true},
     {API_VULKAN, OS_ALL, VENDOR_NVIDIA, DRIVER_NVIDIA, Family::UNKNOWN, BUG_BROKEN_MSAA_CLEAR, -1.0,
      -1.0, true},
     {API_VULKAN, OS_ALL, VENDOR_IMGTEC, DRIVER_IMGTEC, Family::UNKNOWN,
      BUG_BROKEN_CLEAR_LOADOP_RENDERPASS, -1.0, -1.0, true},
-};
+    {API_VULKAN, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN, BUG_BROKEN_D32F_CLEAR,
+     -1.0, -1.0, true}};
 
 static std::map<Bug, BugInfo> m_bugs;
 

@@ -14,6 +14,7 @@
 #include "Common/Logging/Log.h"
 #include "Common/MathUtil.h"
 
+#include "Core/Config/MainSettings.h"
 #include "Core/Config/SYSCONFSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
@@ -685,6 +686,9 @@ static void BeginField(FieldType field, u64 ticks)
     xfbAddr = GetXFBAddressTop();
   }
 
+  // Multiply the stride by 2 to get the byte offset for each subsequent line.
+  fbStride *= 2;
+
   if (potentially_interlaced_xfb && interlaced_video_mode && g_ActiveConfig.bForceProgressive)
   {
     // Strictly speaking, in interlaced mode, we're only supposed to read
@@ -703,10 +707,10 @@ static void BeginField(FieldType field, u64 ticks)
     // offset the xfb by (-stride_of_one_line) to get the start
     // address of the full xfb.
     if (field == FieldType::Odd && m_VBlankTimingOdd.PRB == m_VBlankTimingEven.PRB + 1 && xfbAddr)
-      xfbAddr -= fbStride * 2;
+      xfbAddr -= fbStride;
 
     if (field == FieldType::Even && m_VBlankTimingOdd.PRB == m_VBlankTimingEven.PRB - 1 && xfbAddr)
-      xfbAddr -= fbStride * 2;
+      xfbAddr -= fbStride;
   }
 
   LogField(field, xfbAddr);
@@ -731,7 +735,13 @@ void Update(u64 ticks)
   if (s_half_line_of_next_si_poll == s_half_line_count)
   {
     SerialInterface::UpdateDevices();
-    s_half_line_of_next_si_poll += SerialInterface::GetPollXLines();
+
+    // If this setting is enabled, only poll twice per field instead of what the game wanted. It may
+    // be set during NetPlay or Movie playback.
+    if (Config::Get(Config::MAIN_REDUCE_POLLING_RATE))
+      s_half_line_of_next_si_poll += GetHalfLinesPerEvenField() / 2;
+    else
+      s_half_line_of_next_si_poll += SerialInterface::GetPollXLines();
   }
   if (s_half_line_count == s_even_field_first_hl)
   {
@@ -780,10 +790,8 @@ void Update(u64 ticks)
 }
 
 // Create a fake VI mode for a fifolog
-void FakeVIUpdate(u32 xfb_address, u32 fb_width, u32 fb_height)
+void FakeVIUpdate(u32 xfb_address, u32 fb_width, u32 fb_stride, u32 fb_height)
 {
-  u32 fb_stride = fb_width;
-
   bool interlaced = fb_height > 480 / 2;
   if (interlaced)
   {
@@ -800,7 +808,7 @@ void FakeVIUpdate(u32 xfb_address, u32 fb_width, u32 fb_height)
   m_VBlankTimingEven.PRB = 503 - fb_height * 2;
   m_VBlankTimingEven.PSB = 4;
   m_PictureConfiguration.WPL = fb_width / 16;
-  m_PictureConfiguration.STD = fb_stride / 16;
+  m_PictureConfiguration.STD = (fb_stride / 2) / 16;
 
   UpdateParameters();
 
@@ -819,4 +827,4 @@ void FakeVIUpdate(u32 xfb_address, u32 fb_width, u32 fb_height)
   }
 }
 
-}  // namespace
+}  // namespace VideoInterface

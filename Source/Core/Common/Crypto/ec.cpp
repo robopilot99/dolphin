@@ -7,14 +7,13 @@
 // http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <ctime>
-#include <string.h>
+#include <cstring>
 
-#include "Common/Common.h"
+#include "Common/Compiler.h"
 #include "Common/Crypto/bn.h"
 #include "Common/Crypto/ec.h"
+#include "Common/Random.h"
+#include "Common/StringUtil.h"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -174,9 +173,9 @@ private:
 };
 
 // y**2 + x*y = x**3 + x + b
-UNUSED static const u8 ec_b[30] = {0x00, 0x66, 0x64, 0x7e, 0xde, 0x6c, 0x33, 0x2c, 0x7f, 0x8c,
-                                   0x09, 0x23, 0xbb, 0x58, 0x21, 0x3b, 0x33, 0x3b, 0x20, 0xe9,
-                                   0xce, 0x42, 0x81, 0xfe, 0x11, 0x5f, 0x7d, 0x8f, 0x90, 0xad};
+DOLPHIN_UNUSED static const u8 ec_b[30] = {
+    0x00, 0x66, 0x64, 0x7e, 0xde, 0x6c, 0x33, 0x2c, 0x7f, 0x8c, 0x09, 0x23, 0xbb, 0x58, 0x21,
+    0x3b, 0x33, 0x3b, 0x20, 0xe9, 0xce, 0x42, 0x81, 0xfe, 0x11, 0x5f, 0x7d, 0x8f, 0x90, 0xad};
 
 // order of the addition group of points
 static const u8 ec_N[30] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -230,30 +229,18 @@ static Point operator*(const u8* a, const Point& b)
   return d;
 }
 
-static void silly_random(u8* rndArea, u8 count)
-{
-  u16 i;
-  srand((unsigned)(time(nullptr)));
-
-  for (i = 0; i < count; i++)
-  {
-    rndArea[i] = rand();
-  }
-}
-
 Signature Sign(const u8* key, const u8* hash)
 {
   u8 e[30]{};
   memcpy(e + 10, hash, 20);
 
-  // Changing random number generator to a lame one...
   u8 m[30];
-  silly_random(m, sizeof(m));
-  // fp = fopen("/dev/random", "rb");
-  // if (fread(m, sizeof m, 1, fp) != 1)
-  //	fatal("reading random");
-  // fclose(fp);
-  m[0] = 0;
+  do
+  {
+    // Generate 240 bits and keep 233.
+    Common::Random::Generate(m, sizeof(m));
+    m[0] &= 1;
+  } while (bn_compare(m, ec_N, sizeof(m)) >= 0);
 
   Elt r = (m * ec_G).X();
   if (bn_compare(r.data.data(), ec_N, 30) >= 0)

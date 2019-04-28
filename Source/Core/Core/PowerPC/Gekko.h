@@ -294,6 +294,23 @@ union UGeckoInstruction
   };
 };
 
+// Used in implementations of rlwimi, rlwinm, and rlwnm
+inline u32 MakeRotationMask(u32 mb, u32 me)
+{
+  // first make 001111111111111 part
+  const u32 begin = 0xFFFFFFFF >> mb;
+  // then make 000000000001111 part, which is used to flip the bits of the first one
+  const u32 end = 0x7FFFFFFF >> me;
+  // do the bitflip
+  const u32 mask = begin ^ end;
+
+  // and invert if backwards
+  if (me < mb)
+    return ~mask;
+
+  return mask;
+}
+
 //
 // --- Gekko Special Registers ---
 //
@@ -474,8 +491,37 @@ union UReg_FPSCR
   };
   u32 Hex = 0;
 
+  // The FPSCR's 20th bit (11th from a little endian perspective)
+  // is defined as reserved and set to zero. Attempts to modify it
+  // are ignored by hardware, so we do the same.
+  static constexpr u32 mask = 0xFFFFF7FF;
+
   UReg_FPSCR() = default;
-  explicit UReg_FPSCR(u32 hex_) : Hex{hex_} {}
+  explicit UReg_FPSCR(u32 hex_) : Hex{hex_ & mask} {}
+
+  UReg_FPSCR& operator=(u32 value)
+  {
+    Hex = value & mask;
+    return *this;
+  }
+
+  UReg_FPSCR& operator|=(u32 value)
+  {
+    Hex |= value & mask;
+    return *this;
+  }
+
+  UReg_FPSCR& operator&=(u32 value)
+  {
+    Hex &= value;
+    return *this;
+  }
+
+  UReg_FPSCR& operator^=(u32 value)
+  {
+    Hex ^= value & mask;
+    return *this;
+  }
 
   void ClearFIFR()
   {

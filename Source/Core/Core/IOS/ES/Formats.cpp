@@ -32,9 +32,7 @@
 #include "Core/IOS/IOSC.h"
 #include "Core/IOS/Uids.h"
 
-namespace IOS
-{
-namespace ES
+namespace IOS::ES
 {
 constexpr size_t CONTENT_VIEW_SIZE = 0x10;
 
@@ -297,10 +295,16 @@ u16 TMDReader::GetGroupId() const
 
 DiscIO::Region TMDReader::GetRegion() const
 {
+  if (!IsChannel(GetTitleId()))
+    return DiscIO::Region::Unknown;
+
   if (GetTitleId() == Titles::SYSTEM_MENU)
     return DiscIO::GetSysMenuRegion(GetTitleVersion());
 
-  return DiscIO::RegionSwitchWii(static_cast<u8>(GetTitleId() & 0xff));
+  const DiscIO::Region region =
+      static_cast<DiscIO::Region>(Common::swap16(m_bytes.data() + offsetof(TMDHeader, region)));
+
+  return region <= DiscIO::Region::NTSC_K ? region : DiscIO::Region::Unknown;
 }
 
 std::string TMDReader::GetGameID() const
@@ -315,6 +319,20 @@ std::string TMDReader::GetGameID() const
 
   if (all_printable)
     return std::string(game_id, sizeof(game_id));
+
+  return StringFromFormat("%016" PRIx64, GetTitleId());
+}
+
+std::string TMDReader::GetGameTDBID() const
+{
+  const u8* begin = m_bytes.data() + offsetof(TMDHeader, title_id) + 4;
+  const u8* end = begin + 4;
+
+  const bool all_printable =
+      std::all_of(begin, end, [](char c) { return std::isprint(c, std::locale::classic()); });
+
+  if (all_printable)
+    return std::string(begin, end);
 
   return StringFromFormat("%016" PRIx64, GetTitleId());
 }
@@ -423,6 +441,11 @@ u64 TicketReader::GetTitleId() const
   return Common::swap64(m_bytes.data() + offsetof(Ticket, title_id));
 }
 
+u8 TicketReader::GetCommonKeyIndex() const
+{
+  return m_bytes[offsetof(Ticket, common_key_index)];
+}
+
 std::array<u8, 16> TicketReader::GetTitleKey(const HLE::IOSC& iosc) const
 {
   u8 iv[16] = {};
@@ -445,10 +468,13 @@ std::array<u8, 16> TicketReader::GetTitleKey(const HLE::IOSC& iosc) const
 
 std::array<u8, 16> TicketReader::GetTitleKey() const
 {
-  const bool is_rvt = (GetIssuer() == "Root-CA00000002-XS00000006");
-  const HLE::IOSC::ConsoleType console_type =
-      is_rvt ? HLE::IOSC::ConsoleType::RVT : HLE::IOSC::ConsoleType::Retail;
-  return GetTitleKey(HLE::IOSC{console_type});
+  return GetTitleKey(HLE::IOSC{GetConsoleType()});
+}
+
+HLE::IOSC::ConsoleType TicketReader::GetConsoleType() const
+{
+  const bool is_rvt = GetIssuer() == "Root-CA00000002-XS00000006";
+  return is_rvt ? HLE::IOSC::ConsoleType::RVT : HLE::IOSC::ConsoleType::Retail;
 }
 
 void TicketReader::DeleteTicket(u64 ticket_id_to_delete)
@@ -771,5 +797,4 @@ std::map<std::string, CertReader> ParseCertChain(const std::vector<u8>& chain)
   }
   return certs;
 }
-}  // namespace ES
-}  // namespace IOS
+}  // namespace IOS::ES

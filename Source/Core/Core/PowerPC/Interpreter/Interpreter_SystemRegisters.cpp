@@ -4,8 +4,6 @@
 
 #include "Core/PowerPC/Interpreter/Interpreter.h"
 
-#include <cstring>
-
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/FPURoundMode.h"
@@ -47,6 +45,13 @@ static void FPSCRtoFPUSettings(UReg_FPSCR fp)
   FPURoundMode::SetSIMDMode(fp.RN, fp.NI);
 }
 
+static void UpdateFPSCR(UReg_FPSCR* fpscr)
+{
+  fpscr->VX = (fpscr->Hex & FPSCR_VX_ANY) != 0;
+  fpscr->FEX = (fpscr->VX & fpscr->VE) | (fpscr->OX & fpscr->OE) | (fpscr->UX & fpscr->UE) |
+               (fpscr->ZX & fpscr->ZE) | (fpscr->XX & fpscr->XE);
+}
+
 void Interpreter::mtfsb0x(UGeckoInstruction inst)
 {
   u32 b = 0x80000000 >> inst.CRBD;
@@ -55,34 +60,39 @@ void Interpreter::mtfsb0x(UGeckoInstruction inst)
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
+// This instruction can affect FX
 void Interpreter::mtfsb1x(UGeckoInstruction inst)
 {
-  // this instruction can affect FX
-  u32 b = 0x80000000 >> inst.CRBD;
+  const u32 bit = inst.CRBD;
+  const u32 b = 0x80000000 >> bit;
+
   if (b & FPSCR_ANY_X)
-    SetFPException(b);
+    SetFPException(&FPSCR, b);
   else
-    FPSCR.Hex |= b;
+    FPSCR |= b;
+
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mtfsfix(UGeckoInstruction inst)
 {
-  u32 mask = (0xF0000000 >> (4 * inst.CRFD));
-  u32 imm = (inst.hex << 16) & 0xF0000000;
+  const u32 field = inst.CRFD;
+  const u32 pre_shifted_mask = 0xF0000000;
+  const u32 mask = (pre_shifted_mask >> (4 * field));
+  const u32 imm = (inst.hex << 16) & pre_shifted_mask;
 
-  FPSCR.Hex = (FPSCR.Hex & ~mask) | (imm >> (4 * inst.CRFD));
+  FPSCR = (FPSCR.Hex & ~mask) | (imm >> (4 * field));
 
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mtfsfx(UGeckoInstruction inst)
@@ -95,23 +105,23 @@ void Interpreter::mtfsfx(UGeckoInstruction inst)
       m |= (0xFU << (i * 4));
   }
 
-  FPSCR.Hex = (FPSCR.Hex & ~m) | (static_cast<u32>(riPS0(inst.FB)) & m);
+  FPSCR = (FPSCR.Hex & ~m) | (static_cast<u32>(rPS(inst.FB).PS0AsU64()) & m);
   FPSCRtoFPUSettings(FPSCR);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }
 
 void Interpreter::mcrxr(UGeckoInstruction inst)
 {
-  PowerPC::SetCRField(inst.CRFD, PowerPC::GetXER().Hex >> 28);
+  PowerPC::ppcState.cr.SetField(inst.CRFD, PowerPC::GetXER().Hex >> 28);
   PowerPC::ppcState.xer_ca = 0;
   PowerPC::ppcState.xer_so_ov = 0;
 }
 
 void Interpreter::mfcr(UGeckoInstruction inst)
 {
-  rGPR[inst.RD] = PowerPC::GetCR();
+  rGPR[inst.RD] = PowerPC::ppcState.cr.Get();
 }
 
 void Interpreter::mtcrf(UGeckoInstruction inst)
@@ -119,7 +129,7 @@ void Interpreter::mtcrf(UGeckoInstruction inst)
   const u32 crm = inst.CRM;
   if (crm == 0xFF)
   {
-    PowerPC::SetCR(rGPR[inst.RS]);
+    PowerPC::ppcState.cr.Set(rGPR[inst.RS]);
   }
   else
   {
@@ -131,7 +141,7 @@ void Interpreter::mtcrf(UGeckoInstruction inst)
         mask |= 0xFU << (i * 4);
     }
 
-    PowerPC::SetCR((PowerPC::GetCR() & ~mask) | (rGPR[inst.RS] & mask));
+    PowerPC::ppcState.cr.Set((PowerPC::ppcState.cr.Get() & ~mask) | (rGPR[inst.RS] & mask));
   }
 }
 
@@ -184,13 +194,6 @@ void Interpreter::mtmsr(UGeckoInstruction inst)
 
 // Segment registers. MMU control.
 
-static void SetSR(u32 index, u32 value)
-{
-  DEBUG_LOG(POWERPC, "%08x: MMU: Segment register %i set to %08x", PowerPC::ppcState.pc, index,
-            value);
-  PowerPC::ppcState.sr[index] = value;
-}
-
 void Interpreter::mtsr(UGeckoInstruction inst)
 {
   if (MSR.PR)
@@ -201,7 +204,7 @@ void Interpreter::mtsr(UGeckoInstruction inst)
 
   const u32 index = inst.SR;
   const u32 value = rGPR[inst.RS];
-  SetSR(index, value);
+  PowerPC::ppcState.SetSR(index, value);
 }
 
 void Interpreter::mtsrin(UGeckoInstruction inst)
@@ -214,7 +217,7 @@ void Interpreter::mtsrin(UGeckoInstruction inst)
 
   const u32 index = (rGPR[inst.RB] >> 28) & 0xF;
   const u32 value = rGPR[inst.RS];
-  SetSR(index, value);
+  PowerPC::ppcState.SetSR(index, value);
 }
 
 void Interpreter::mftb(UGeckoInstruction inst)
@@ -248,12 +251,8 @@ void Interpreter::mfspr(UGeckoInstruction inst)
 
   case SPR_TL:
   case SPR_TU:
-  {
-    // works since we are little endian and TL comes first :)
-    const u64 time_base = SystemTimers::GetFakeTimeBase();
-    std::memcpy(&TL, &time_base, sizeof(u64));
-  }
-  break;
+    PowerPC::WriteFullTimeBaseValue(SystemTimers::GetFakeTimeBase());
+    break;
 
   case SPR_WPAR:
   {
@@ -307,6 +306,11 @@ void Interpreter::mtspr(UGeckoInstruction inst)
     SystemTimers::TimeBaseSet();
     break;
 
+  case SPR_PVR:
+    // PVR is a read-only register so maintain its value.
+    rSPR(index) = old_value;
+    break;
+
   case SPR_HID0:  // HID0
   {
     UReg_HID0 old_hid0;
@@ -329,11 +333,20 @@ void Interpreter::mtspr(UGeckoInstruction inst)
     }
   }
   break;
-  case SPR_HID2:  // HID2
-    // TODO: generate illegal instruction for paired inst if PSE or LSQE
-    // not set.
+
+  case SPR_HID1:
+    // Despite being documented as a read-only register, it actually isn't. Bits
+    // 0-4 (27-31 from a little endian perspective) are modifiable. The rest are not
+    // affected, as those bits are reserved and ignore writes to them.
+    rSPR(index) &= 0xF8000000;
+    break;
+
+  case SPR_HID2:
     // TODO: disable write gather pipe if WPE not set
     // TODO: emulate locked cache and DMA bits.
+    // Only the lower half of the register (upper half from a little endian perspective)
+    // is modifiable, except for the DMAQL field.
+    rSPR(index) = (rSPR(index) & 0xF0FF0000) | (old_value & 0x0F000000);
     break;
 
   case SPR_HID4:
@@ -386,7 +399,7 @@ void Interpreter::mtspr(UGeckoInstruction inst)
   case SPR_DEC:
     if (!(old_value >> 31) && (rGPR[inst.RD] >> 31))  // top bit from 0 to 1
     {
-      PanicAlert("Interesting - Software triggered Decrementer exception");
+      INFO_LOG(POWERPC, "Software triggered Decrementer exception");
       PowerPC::ppcState.Exceptions |= EXCEPTION_DECREMENTER;
     }
     SystemTimers::DecrementerSet();
@@ -451,48 +464,56 @@ void Interpreter::mtspr(UGeckoInstruction inst)
 
 void Interpreter::crand(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, PowerPC::GetCRBit(inst.CRBA) & PowerPC::GetCRBit(inst.CRBB));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, PowerPC::ppcState.cr.GetBit(inst.CRBA) &
+                                             PowerPC::ppcState.cr.GetBit(inst.CRBB));
 }
 
 void Interpreter::crandc(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, PowerPC::GetCRBit(inst.CRBA) & (1 ^ PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, PowerPC::ppcState.cr.GetBit(inst.CRBA) &
+                                             (1 ^ PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::creqv(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, 1 ^ (PowerPC::GetCRBit(inst.CRBA) ^ PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, 1 ^ (PowerPC::ppcState.cr.GetBit(inst.CRBA) ^
+                                              PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::crnand(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, 1 ^ (PowerPC::GetCRBit(inst.CRBA) & PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, 1 ^ (PowerPC::ppcState.cr.GetBit(inst.CRBA) &
+                                              PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::crnor(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, 1 ^ (PowerPC::GetCRBit(inst.CRBA) | PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, 1 ^ (PowerPC::ppcState.cr.GetBit(inst.CRBA) |
+                                              PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::cror(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, (PowerPC::GetCRBit(inst.CRBA) | PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(
+      inst.CRBD, (PowerPC::ppcState.cr.GetBit(inst.CRBA) | PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::crorc(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, (PowerPC::GetCRBit(inst.CRBA) | (1 ^ PowerPC::GetCRBit(inst.CRBB))));
+  PowerPC::ppcState.cr.SetBit(inst.CRBD, (PowerPC::ppcState.cr.GetBit(inst.CRBA) |
+                                          (1 ^ PowerPC::ppcState.cr.GetBit(inst.CRBB))));
 }
 
 void Interpreter::crxor(UGeckoInstruction inst)
 {
-  PowerPC::SetCRBit(inst.CRBD, (PowerPC::GetCRBit(inst.CRBA) ^ PowerPC::GetCRBit(inst.CRBB)));
+  PowerPC::ppcState.cr.SetBit(
+      inst.CRBD, (PowerPC::ppcState.cr.GetBit(inst.CRBA) ^ PowerPC::ppcState.cr.GetBit(inst.CRBB)));
 }
 
 void Interpreter::mcrf(UGeckoInstruction inst)
 {
-  const u32 cr_f = PowerPC::GetCRField(inst.CRFS);
-  PowerPC::SetCRField(inst.CRFD, cr_f);
+  const u32 cr_f = PowerPC::ppcState.cr.GetField(inst.CRFS);
+  PowerPC::ppcState.cr.SetField(inst.CRFD, cr_f);
 }
 
 void Interpreter::isync(UGeckoInstruction inst)
@@ -504,7 +525,7 @@ void Interpreter::isync(UGeckoInstruction inst)
 
 void Interpreter::mcrfs(UGeckoInstruction inst)
 {
-  UpdateFPSCR();
+  UpdateFPSCR(&FPSCR);
   u32 fpflags = ((FPSCR.Hex >> (4 * (7 - inst.CRFS))) & 0xF);
   switch (inst.CRFS)
   {
@@ -533,7 +554,7 @@ void Interpreter::mcrfs(UGeckoInstruction inst)
     FPSCR.VXCVI = 0;
     break;
   }
-  PowerPC::SetCRField(inst.CRFD, fpflags);
+  PowerPC::ppcState.cr.SetField(inst.CRFD, fpflags);
 }
 
 void Interpreter::mffsx(UGeckoInstruction inst)
@@ -541,9 +562,9 @@ void Interpreter::mffsx(UGeckoInstruction inst)
   // load from FPSCR
   // TODO(ector): grab all overflow flags etc and set them in FPSCR
 
-  UpdateFPSCR();
-  riPS0(inst.FD) = 0xFFF8000000000000 | FPSCR.Hex;
+  UpdateFPSCR(&FPSCR);
+  rPS(inst.FD).SetPS0(UINT64_C(0xFFF8000000000000) | FPSCR.Hex);
 
   if (inst.Rc)
-    Helper_UpdateCR1();
+    PowerPC::ppcState.UpdateCR1();
 }

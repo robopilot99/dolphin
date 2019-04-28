@@ -17,6 +17,7 @@
 #include "ShaderLang.h"
 #include "disassemble.h"
 
+#include "Common/CommonFuncs.h"
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
@@ -39,11 +40,6 @@ static bool CompileShaderToSPV(SPIRVCodeVector* out_code, EShLanguage stage,
                                const char* stage_filename, const char* source_code,
                                size_t source_code_length, const char* header, size_t header_length);
 
-// Copy GLSL source code to a SPIRVCodeVector, for use with VK_NV_glsl_shader.
-static void CopyGLSLToSPVVector(SPIRVCodeVector* out_code, const char* stage_filename,
-                                const char* source_code, size_t source_code_length,
-                                const char* header, size_t header_length);
-
 // Regarding the UBO bind points, we subtract one from the binding index because
 // the OpenGL backend requires UBO #0 for non-block uniforms (at least on NV).
 // This allows us to share the same shaders but use bind point #0 in the Vulkan
@@ -58,12 +54,13 @@ static const char SHADER_HEADER[] = R"(
   #define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y) layout(location = x, index = y)
   #define UBO_BINDING(packing, x) layout(packing, set = 0, binding = (x - 1))
   #define SAMPLER_BINDING(x) layout(set = 1, binding = x)
+  #define TEXEL_BUFFER_BINDING(x) layout(set = 1, binding = (x + 8))
   #define SSBO_BINDING(x) layout(set = 2, binding = x)
-  #define TEXEL_BUFFER_BINDING(x) layout(set = 2, binding = x)
   #define VARYING_LOCATION(x) layout(location = x)
   #define FORCE_EARLY_Z layout(early_fragment_tests) in
 
   // hlsl to glsl function translation
+  #define API_VULKAN 1
   #define float2 vec2
   #define float3 vec3
   #define float4 vec4
@@ -84,12 +81,13 @@ static const char COMPUTE_SHADER_HEADER[] = R"(
   // Target GLSL 4.5.
   #version 450 core
   // All resources are packed into one descriptor set for compute.
-  #define UBO_BINDING(packing, x) layout(packing, set = 0, binding = (0 + x))
+  #define UBO_BINDING(packing, x) layout(packing, set = 0, binding = (x - 1))
   #define SAMPLER_BINDING(x) layout(set = 0, binding = (1 + x))
-  #define TEXEL_BUFFER_BINDING(x) layout(set = 0, binding = (5 + x))
-  #define IMAGE_BINDING(format, x) layout(format, set = 0, binding = (7 + x))
+  #define TEXEL_BUFFER_BINDING(x) layout(set = 0, binding = (3 + x))
+  #define IMAGE_BINDING(format, x) layout(format, set = 0, binding = (5 + x))
 
   // hlsl to glsl function translation
+  #define API_VULKAN 1
   #define float2 vec2
   #define float3 vec3
   #define float4 vec4
@@ -101,6 +99,18 @@ static const char COMPUTE_SHADER_HEADER[] = R"(
   #define int4 ivec4
   #define frac fract
   #define lerp mix
+)";
+static const char SUBGROUP_HELPER_HEADER[] = R"(
+  #extension GL_KHR_shader_subgroup_basic : enable
+  #extension GL_KHR_shader_subgroup_arithmetic : enable
+  #extension GL_KHR_shader_subgroup_ballot : enable
+
+  #define SUPPORTS_SUBGROUP_REDUCTION 1
+  #define CAN_USE_SUBGROUP_REDUCTION true
+  #define IS_HELPER_INVOCATION gl_HelperInvocation
+  #define IS_FIRST_ACTIVE_INVOCATION (gl_SubgroupInvocationID == subgroupBallotFindLSB(subgroupBallot(true)))
+  #define SUBGROUP_MIN(value) value = subgroupMin(value)
+  #define SUBGROUP_MAX(value) value = subgroupMax(value)
 )";
 
 bool CompileShaderToSPV(SPIRVCodeVector* out_code, EShLanguage stage, const char* stage_filename,
@@ -123,12 +133,19 @@ bool CompileShaderToSPV(SPIRVCodeVector* out_code, EShLanguage stage, const char
   int pass_source_code_length = static_cast<int>(source_code_length);
   if (header_length > 0)
   {
-    full_source_code.reserve(header_length + source_code_length);
+    constexpr size_t subgroup_helper_header_length = ArraySize(SUBGROUP_HELPER_HEADER) - 1;
+    full_source_code.reserve(header_length + subgroup_helper_header_length + source_code_length);
     full_source_code.append(header, header_length);
+    if (g_vulkan_context->SupportsShaderSubgroupOperations())
+      full_source_code.append(SUBGROUP_HELPER_HEADER, subgroup_helper_header_length);
     full_source_code.append(source_code, source_code_length);
     pass_source_code = full_source_code.c_str();
     pass_source_code_length = static_cast<int>(full_source_code.length());
   }
+
+  // Sub-group operations require Vulkan 1.1 and SPIR-V 1.3.
+  if (g_vulkan_context->SupportsShaderSubgroupOperations())
+    shader->setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_3);
 
   shader->setStringsWithLengths(&pass_source_code, &pass_source_code_length, 1);
 
@@ -224,42 +241,6 @@ bool CompileShaderToSPV(SPIRVCodeVector* out_code, EShLanguage stage, const char
   }
 
   return true;
-}
-
-void CopyGLSLToSPVVector(SPIRVCodeVector* out_code, const char* stage_filename,
-                         const char* source_code, size_t source_code_length, const char* header,
-                         size_t header_length)
-{
-  std::string full_source_code;
-  if (header_length > 0)
-  {
-    full_source_code.reserve(header_length + source_code_length);
-    full_source_code.append(header, header_length);
-    full_source_code.append(source_code, source_code_length);
-  }
-  else
-  {
-    full_source_code.append(source_code, source_code_length);
-  }
-
-  if (g_ActiveConfig.iLog & CONF_SAVESHADERS)
-  {
-    static int counter = 0;
-    std::string filename = StringFromFormat("%s%s_%04i.txt", File::GetUserPath(D_DUMP_IDX).c_str(),
-                                            stage_filename, counter++);
-
-    std::ofstream stream;
-    File::OpenFStream(stream, filename, std::ios_base::out);
-    if (stream.good())
-      stream << full_source_code << std::endl;
-  }
-
-  size_t padding = full_source_code.size() % 4;
-  if (padding != 0)
-    full_source_code.append(4 - padding, '\n');
-
-  out_code->resize(full_source_code.size() / 4);
-  std::memcpy(out_code->data(), full_source_code.c_str(), full_source_code.size());
 }
 
 bool InitializeGlslang()
@@ -384,13 +365,6 @@ const TBuiltInResource* GetCompilerResourceLimits()
 bool CompileVertexShader(SPIRVCodeVector* out_code, const char* source_code,
                          size_t source_code_length)
 {
-  if (g_vulkan_context->SupportsNVGLSLExtension())
-  {
-    CopyGLSLToSPVVector(out_code, "vs", source_code, source_code_length, SHADER_HEADER,
-                        sizeof(SHADER_HEADER) - 1);
-    return true;
-  }
-
   return CompileShaderToSPV(out_code, EShLangVertex, "vs", source_code, source_code_length,
                             SHADER_HEADER, sizeof(SHADER_HEADER) - 1);
 }
@@ -398,13 +372,6 @@ bool CompileVertexShader(SPIRVCodeVector* out_code, const char* source_code,
 bool CompileGeometryShader(SPIRVCodeVector* out_code, const char* source_code,
                            size_t source_code_length)
 {
-  if (g_vulkan_context->SupportsNVGLSLExtension())
-  {
-    CopyGLSLToSPVVector(out_code, "gs", source_code, source_code_length, SHADER_HEADER,
-                        sizeof(SHADER_HEADER) - 1);
-    return true;
-  }
-
   return CompileShaderToSPV(out_code, EShLangGeometry, "gs", source_code, source_code_length,
                             SHADER_HEADER, sizeof(SHADER_HEADER) - 1);
 }
@@ -412,13 +379,6 @@ bool CompileGeometryShader(SPIRVCodeVector* out_code, const char* source_code,
 bool CompileFragmentShader(SPIRVCodeVector* out_code, const char* source_code,
                            size_t source_code_length)
 {
-  if (g_vulkan_context->SupportsNVGLSLExtension())
-  {
-    CopyGLSLToSPVVector(out_code, "ps", source_code, source_code_length, SHADER_HEADER,
-                        sizeof(SHADER_HEADER) - 1);
-    return true;
-  }
-
   return CompileShaderToSPV(out_code, EShLangFragment, "ps", source_code, source_code_length,
                             SHADER_HEADER, sizeof(SHADER_HEADER) - 1);
 }
@@ -426,13 +386,6 @@ bool CompileFragmentShader(SPIRVCodeVector* out_code, const char* source_code,
 bool CompileComputeShader(SPIRVCodeVector* out_code, const char* source_code,
                           size_t source_code_length)
 {
-  if (g_vulkan_context->SupportsNVGLSLExtension())
-  {
-    CopyGLSLToSPVVector(out_code, "cs", source_code, source_code_length, COMPUTE_SHADER_HEADER,
-                        sizeof(COMPUTE_SHADER_HEADER) - 1);
-    return true;
-  }
-
   return CompileShaderToSPV(out_code, EShLangCompute, "cs", source_code, source_code_length,
                             COMPUTE_SHADER_HEADER, sizeof(COMPUTE_SHADER_HEADER) - 1);
 }

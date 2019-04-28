@@ -8,6 +8,8 @@ Dolphin includes or links code of the following third-party software projects:
    [LGPLv2.1+](http://bochs.sourceforge.net/cgi-bin/lxr/source/COPYING)
 - [cubeb](https://github.com/kinetiknz/cubeb):
    [ISC](https://github.com/kinetiknz/cubeb/blob/master/LICENSE)
+- [Discord-RPC](https://github.com/discordapp/discord-rpc):
+   [MIT](https://github.com/discordapp/discord-rpc/blob/master/LICENSE)
 - [ENet](http://enet.bespin.org/):
    [MIT](http://enet.bespin.org/License.html)
 - [GCEmu](http://sourceforge.net/projects/gcemu-project/):
@@ -58,8 +60,6 @@ Dolphin includes or links code of the following third-party software projects:
    [LGPLv2+](http://www.surina.net/soundtouch/license.html)
 - [TAP-Windows](https://openvpn.net/):
    header only
-- [wxWidgets](https://www.wxwidgets.org/):
-   [wxWindows Library License](https://www.wxwidgets.org/about/licence/) (LGPLv2+-like)
 - [XAudio2](http://msdn.microsoft.com/en-us/library/windows/desktop/hh405049.aspx):
    headers only
 - [xxHash](https://github.com/Cyan4973/xxHash):

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Core/IOS/IOSC.h"
 #include "DiscIO/Blob.h"
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
@@ -39,6 +40,7 @@ struct BootParameters
   {
     std::string path;
     std::unique_ptr<DiscIO::Volume> volume;
+    std::vector<std::string> auto_disc_change_paths;
   };
 
   struct Executable
@@ -68,7 +70,9 @@ struct BootParameters
   };
 
   static std::unique_ptr<BootParameters>
-  GenerateFromFile(const std::string& boot_path,
+  GenerateFromFile(std::string boot_path, const std::optional<std::string>& savestate_path = {});
+  static std::unique_ptr<BootParameters>
+  GenerateFromFile(std::vector<std::string> paths,
                    const std::optional<std::string>& savestate_path = {});
 
   using Parameters = std::variant<Disc, Executable, DiscIO::WiiWAD, NANDTitle, IPL, DFF>;
@@ -116,7 +120,7 @@ private:
   static bool Load_BS2(const std::string& boot_rom_filename);
 
   static void SetupGCMemory();
-  static bool SetupWiiMemory();
+  static bool SetupWiiMemory(IOS::HLE::IOSC::ConsoleType console_type);
 };
 
 class BootExecutableReader

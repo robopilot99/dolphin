@@ -29,6 +29,7 @@ enum
                           // settings (per game)
   D_MAPS_IDX,
   D_CACHE_IDX,
+  D_COVERCACHE_IDX,
   D_SHADERCACHE_IDX,
   D_SHADERS_IDX,
   D_STATESAVES_IDX,
@@ -36,6 +37,7 @@ enum
   D_HIRESTEXTURES_IDX,
   D_DUMP_IDX,
   D_DUMPFRAMES_IDX,
+  D_DUMPOBJECTS_IDX,
   D_DUMPAUDIO_IDX,
   D_DUMPTEXTURES_IDX,
   D_DUMPDSP_IDX,
@@ -49,6 +51,7 @@ enum
   D_MEMORYWATCHER_IDX,
   D_WFSROOT_IDX,
   D_BACKUP_IDX,
+  D_RESOURCEPACK_IDX,
   F_DOLPHINCONFIG_IDX,
   F_GCPADCONFIG_IDX,
   F_WIIPADCONFIG_IDX,
@@ -208,4 +211,4 @@ void OpenFStream(T& fstream, const std::string& filename, std::ios_base::openmod
 #endif
 }
 
-}  // namespace
+}  // namespace File

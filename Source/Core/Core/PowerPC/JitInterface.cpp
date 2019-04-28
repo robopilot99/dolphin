@@ -40,33 +40,38 @@
 
 namespace JitInterface
 {
+static JitBase* g_jit = nullptr;
+void SetJit(JitBase* jit)
+{
+  g_jit = jit;
+}
 void DoState(PointerWrap& p)
 {
   if (g_jit && p.GetMode() == PointerWrap::MODE_READ)
     g_jit->ClearCache();
 }
-CPUCoreBase* InitJitCore(int core)
+CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
 {
   switch (core)
   {
 #if _M_X86
-  case PowerPC::CORE_JIT64:
+  case PowerPC::CPUCore::JIT64:
     g_jit = new Jit64();
     break;
 #endif
 #if _M_ARM_64
-  case PowerPC::CORE_JITARM64:
+  case PowerPC::CPUCore::JITARM64:
     g_jit = new JitArm64();
     break;
 #endif
-  case PowerPC::CORE_CACHEDINTERPRETER:
+  case PowerPC::CPUCore::CachedInterpreter:
     g_jit = new CachedInterpreter();
     break;
 
   default:
     PanicAlertT("The selected CPU emulation core (%d) is not available. "
                 "Please select a different CPU emulation core in the settings.",
-                core);
+                static_cast<int>(core));
     g_jit = nullptr;
     return nullptr;
   }
@@ -77,6 +82,14 @@ CPUCoreBase* InitJitCore(int core)
 CPUCoreBase* GetCore()
 {
   return g_jit;
+}
+
+void SetProfilingState(ProfilingState state)
+{
+  if (!g_jit)
+    return;
+
+  g_jit->jo.profile_blocks = state == ProfilingState::Enabled;
 }
 
 void WriteProfileResults(const std::string& filename)
@@ -203,10 +216,6 @@ void ClearCache()
 }
 void ClearSafe()
 {
-  // This clear is "safe" in the sense that it's okay to run from
-  // inside a JIT'ed block: it clears the instruction cache, but not
-  // the JIT'ed code.
-  // TODO: There's probably a better way to handle this situation.
   if (g_jit)
     g_jit->GetBlockCache()->Clear();
 }

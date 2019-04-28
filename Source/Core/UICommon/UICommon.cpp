@@ -33,6 +33,7 @@
 
 #include "InputCommon/GCAdapter.h"
 
+#include "UICommon/DiscordPresence.h"
 #include "UICommon/UICommon.h"
 #include "UICommon/USBUtils.h"
 
@@ -50,13 +51,13 @@ namespace UICommon
 {
 static void CreateDumpPath(const std::string& path)
 {
-  if (path.empty())
-    return;
-  File::SetUserPath(D_DUMP_IDX, path + '/');
+  if (!path.empty())
+    File::SetUserPath(D_DUMP_IDX, path + '/');
   File::CreateFullPath(File::GetUserPath(D_DUMPAUDIO_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPDSP_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPSSL_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPFRAMES_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPOBJECTS_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPTEXTURES_IDX));
 }
 
@@ -75,6 +76,7 @@ void Init()
   Config::AddConfigChangedCallback(InitCustomPaths);
   Config::AddLayer(ConfigLoaders::GenerateBaseConfigLoader());
   SConfig::Init();
+  Discord::Init();
   LogManager::Init();
   VideoBackendBase::PopulateList();
   WiimoteReal::LoadSettings();
@@ -90,6 +92,7 @@ void Shutdown()
   WiimoteReal::Shutdown();
   VideoBackendBase::ClearList();
   LogManager::Shutdown();
+  Discord::Shutdown();
   SConfig::Shutdown();
   Config::Shutdown();
 }
@@ -153,8 +156,10 @@ void SetLocale(std::string locale_name)
 
 void CreateDirectories()
 {
+  File::CreateFullPath(File::GetUserPath(D_RESOURCEPACK_IDX));
   File::CreateFullPath(File::GetUserPath(D_USER_IDX));
   File::CreateFullPath(File::GetUserPath(D_CACHE_IDX));
+  File::CreateFullPath(File::GetUserPath(D_COVERCACHE_IDX));
   File::CreateFullPath(File::GetUserPath(D_CONFIG_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPDSP_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPSSL_IDX));
@@ -174,6 +179,9 @@ void CreateDirectories()
 #ifndef ANDROID
   File::CreateFullPath(File::GetUserPath(D_THEMES_IDX));
   File::CreateFullPath(File::GetUserPath(D_STYLES_IDX));
+#else
+  // Disable media scanning in directories with a .nomedia file
+  File::CreateEmptyFile(File::GetUserPath(D_COVERCACHE_IDX) + DIR_SEP NOMEDIA_FILE);
 #endif
 }
 
@@ -368,7 +376,7 @@ void EnableScreenSaver(bool enable)
 // disable low-power states and/or screen dimming.
 
 #if defined(HAVE_X11) && HAVE_X11
-  if (SConfig::GetInstance().bDisableScreenSaver)
+  if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
   {
     X11Utils::InhibitScreensaver(win, !enable);
   }
@@ -383,7 +391,7 @@ void EnableScreenSaver(bool enable)
   else
   {
     EXECUTION_STATE should_screen_save =
-        SConfig::GetInstance().bDisableScreenSaver ? ES_DISPLAY_REQUIRED : 0;
+        Config::Get(Config::MAIN_DISABLE_SCREENSAVER) ? ES_DISPLAY_REQUIRED : 0;
     SetThreadExecutionState(ES_CONTINUOUS | should_screen_save | ES_SYSTEM_REQUIRED);
   }
 #endif
@@ -391,7 +399,7 @@ void EnableScreenSaver(bool enable)
 #ifdef __APPLE__
   static IOPMAssertionID s_power_assertion = kIOPMNullAssertionID;
 
-  if (SConfig::GetInstance().bDisableScreenSaver)
+  if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
   {
     if (enable)
     {

@@ -30,6 +30,13 @@ struct GameBanner
   void DoState(PointerWrap& p);
 };
 
+struct GameCover
+{
+  std::vector<u8> buffer{};
+  bool empty() const { return buffer.empty(); }
+  void DoState(PointerWrap& p);
+};
+
 bool operator==(const GameBanner& lhs, const GameBanner& rhs);
 bool operator!=(const GameBanner& lhs, const GameBanner& rhs);
 
@@ -44,6 +51,7 @@ public:
   bool IsValid() const;
   const std::string& GetFilePath() const { return m_file_path; }
   const std::string& GetFileName() const { return m_file_name; }
+  const std::string& GetName(const Core::TitleDatabase& title_database) const;
   const std::string& GetName(bool long_name = true) const;
   const std::string& GetMaker(bool long_maker = true) const;
   const std::string& GetShortName(DiscIO::Language l) const { return Lookup(l, m_short_names); }
@@ -59,6 +67,7 @@ public:
   std::vector<DiscIO::Language> GetLanguages() const;
   const std::string& GetInternalName() const { return m_internal_name; }
   const std::string& GetGameID() const { return m_game_id; }
+  const std::string& GetGameTDBID() const { return m_gametdb_id; }
   u64 GetTitleID() const { return m_title_id; }
   const std::string& GetMakerID() const { return m_maker_id; }
   u16 GetRevision() const { return m_revision; }
@@ -74,15 +83,20 @@ public:
   u64 GetFileSize() const { return m_file_size; }
   u64 GetVolumeSize() const { return m_volume_size; }
   const GameBanner& GetBannerImage() const;
+  const GameCover& GetCoverImage() const;
   void DoState(PointerWrap& p);
   bool WiiBannerChanged();
   void WiiBannerCommit();
   bool CustomBannerChanged();
   void CustomBannerCommit();
-  bool CustomNameChanged(const Core::TitleDatabase& title_database);
-  void CustomNameCommit();
+  void DownloadDefaultCover();
+  bool DefaultCoverChanged();
+  void DefaultCoverCommit();
+  bool CustomCoverChanged();
+  void CustomCoverCommit();
 
 private:
+  DiscIO::Language GetConfigLanguage() const;
   static const std::string& Lookup(DiscIO::Language language,
                                    const std::map<DiscIO::Language, std::string>& strings);
   const std::string&
@@ -108,6 +122,7 @@ private:
   std::map<DiscIO::Language, std::string> m_descriptions{};
   std::string m_internal_name{};
   std::string m_game_id{};
+  std::string m_gametdb_id{};
   u64 m_title_id{};
   std::string m_maker_id{};
 
@@ -121,8 +136,8 @@ private:
 
   GameBanner m_volume_banner{};
   GameBanner m_custom_banner{};
-  // Overridden name from TitleDatabase
-  std::string m_custom_name{};
+  GameCover m_default_cover{};
+  GameCover m_custom_cover{};
 
   // The following data members allow GameFileCache to construct updated versions
   // of GameFiles in a threadsafe way. They should not be handled in DoState.
@@ -130,7 +145,8 @@ private:
   {
     GameBanner volume_banner;
     GameBanner custom_banner;
-    std::string custom_name;
+    GameCover default_cover;
+    GameCover custom_cover;
   } m_pending{};
 };
 

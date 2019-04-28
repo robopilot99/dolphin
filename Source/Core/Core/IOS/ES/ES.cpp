@@ -26,11 +26,7 @@
 #include "Core/IOS/Uids.h"
 #include "Core/IOS/VersionInfo.h"
 
-namespace IOS
-{
-namespace HLE
-{
-namespace Device
+namespace IOS::HLE::Device
 {
 // Title to launch after IOS has been reset and reloaded (similar to /sys/launch.sys).
 static u64 s_title_to_launch;
@@ -213,7 +209,8 @@ bool ES::LaunchTitle(u64 title_id, bool skip_reload)
 
   NOTICE_LOG(IOS_ES, "Launching title %016" PRIx64 "...", title_id);
 
-  if (title_id == Titles::SHOP && m_ios.GetIOSC().IsUsingDefaultId())
+  if ((title_id == Titles::SHOP || title_id == Titles::KOREAN_SHOP) &&
+      m_ios.GetIOSC().IsUsingDefaultId())
   {
     ERROR_LOG(IOS_ES, "Refusing to launch the shop channel with default device credentials");
     CriticalAlertT("You cannot use the Wii Shop Channel without using your own device credentials."
@@ -616,7 +613,7 @@ IPCCommandResult ES::DIVerify(const IOCtlVRequest& request)
   return GetDefaultReply(ES_EINVAL);
 }
 
-static s32 WriteTmdForDiVerify(FS::FileSystem* fs, const IOS::ES::TMDReader& tmd)
+static ReturnCode WriteTmdForDiVerify(FS::FileSystem* fs, const IOS::ES::TMDReader& tmd)
 {
   const std::string temp_path = "/tmp/title.tmd";
   fs->Delete(PID_KERNEL, PID_KERNEL, temp_path);
@@ -640,7 +637,7 @@ static s32 WriteTmdForDiVerify(FS::FileSystem* fs, const IOS::ES::TMDReader& tmd
   return FS::ConvertResult(fs->Rename(PID_KERNEL, PID_KERNEL, temp_path, tmd_path));
 }
 
-s32 ES::DIVerify(const IOS::ES::TMDReader& tmd, const IOS::ES::TicketReader& ticket)
+ReturnCode ES::DIVerify(const IOS::ES::TMDReader& tmd, const IOS::ES::TicketReader& ticket)
 {
   m_title_context.Clear();
   INFO_LOG(IOS_ES, "ES_DIVerify: Title context changed: (none)");
@@ -660,7 +657,7 @@ s32 ES::DIVerify(const IOS::ES::TMDReader& tmd, const IOS::ES::TicketReader& tic
   const auto fs = m_ios.GetFS();
   if (!FindInstalledTMD(tmd.GetTitleId()).IsValid())
   {
-    if (const s32 ret = WriteTmdForDiVerify(fs.get(), tmd))
+    if (const ReturnCode ret = WriteTmdForDiVerify(fs.get(), tmd))
     {
       ERROR_LOG(IOS_ES, "DiVerify failed to write disc TMD to NAND.");
       return ret;
@@ -988,6 +985,4 @@ ReturnCode ES::VerifyContainer(VerifyContainerType type, VerifyMode mode,
   }
   return ret;
 }
-}  // namespace Device
-}  // namespace HLE
-}  // namespace IOS
+}  // namespace IOS::HLE::Device
